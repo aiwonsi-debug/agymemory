@@ -1491,10 +1491,11 @@ function handleCommand(chatId, text) {
                             }
                         });
                         
-                        // Keep AuditTrail bounded to last 50 entries
-                        if (stock.AuditTrail.length > 50) {
-                            stock.AuditTrail = stock.AuditTrail.slice(-50);
-                        }
+                    }
+
+                    // Keep AuditTrail bounded to last 50 entries across all ingestion pathways (Yield & Stock)
+                    if (stock.AuditTrail && stock.AuditTrail.length > 50) {
+                        stock.AuditTrail = stock.AuditTrail.slice(-50);
                     }
 
                     if (stockUpdated) {
