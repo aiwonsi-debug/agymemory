@@ -1443,14 +1443,38 @@ function handleCommand(chatId, text) {
                             Yellow_Sweet_Potato: 'มันเหลืองไข่',
                             Orange_Sweet_Potato: 'มันส้ม'
                         };
+                        if (!stock.AuditTrail) stock.AuditTrail = [];
+                        
                         Object.keys(keyMap).forEach(k => {
                             if (inv[k] !== null && inv[k] !== undefined) {
                                 if (!stock.Items[k]) stock.Items[k] = { Name: keyMap[k], StockKg: 0 };
-                                stock.Items[k].StockKg = inv[k];
-                                stockUpdated = true;
-                                updatedKeys.push(`${keyMap[k]} = ${inv[k].toLocaleString()} kg`);
+                                const prevVal = stock.Items[k].StockKg;
+                                const newVal = inv[k];
+                                
+                                // Precise Deduplication Check: Only update if value actually changed
+                                if (prevVal !== newVal) {
+                                    stock.Items[k].StockKg = newVal;
+                                    stockUpdated = true;
+                                    updatedKeys.push(`${keyMap[k]}: ${prevVal ? prevVal.toLocaleString() : 0} -> ${newVal.toLocaleString()} kg`);
+                                    
+                                    // Audit Trail Logging
+                                    stock.AuditTrail.push({
+                                        Timestamp: new Date().toISOString(),
+                                        ItemKey: k,
+                                        ItemName: keyMap[k],
+                                        PreviousKg: prevVal,
+                                        NewKg: newVal,
+                                        Source: 'Telegram Unified Ingestion',
+                                        MessageDate: result.date || null
+                                    });
+                                }
                             }
                         });
+                        
+                        // Keep AuditTrail bounded to last 50 entries
+                        if (stock.AuditTrail.length > 50) {
+                            stock.AuditTrail = stock.AuditTrail.slice(-50);
+                        }
                     }
 
                     if (stockUpdated) {
@@ -1459,6 +1483,8 @@ function handleCommand(chatId, text) {
                         fs.writeFileSync(stockPath, JSON.stringify(stock, null, 2), 'utf8');
                         try { fs.writeFileSync(path.join(agyBaseDir, 'render-dashboard', 'stock_inventory.json'), JSON.stringify(stock, null, 2), 'utf8'); } catch(e){}
                         syncToRender('/api/stock-update', stock);
+                    } else if (result.stock_inventory) {
+                        writeLog('[Dedup Notice]: Stock values identical to existing database. Skipped redundant write and Render sync.');
                     }
 
                     // 2. Process Operations / Intake / Loading Report
