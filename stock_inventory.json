@@ -1,10 +1,10 @@
 {
   "AsOfDate": "05/09/69",
-  "LastUpdated": "2026-09-05T19:01:58.346Z",
+  "LastUpdated": "2026-09-05T20:00:46.896Z",
   "Items": {
     "Cabbage": {
       "Name": "กะหล่ำปลี",
-      "StockKg": 8875,
+      "StockKg": 8800,
       "Yield": {
         "AFT": 0.64,
         "TNS": 0.99
@@ -36,6 +36,18 @@
     }
   },
   "AuditTrail": [
+    {
+      "Timestamp": "2026-09-05T20:18:11.230Z",
+      "Item": "Stock History Record (04/09/69)",
+      "Details": "Cabbage: 8,800 kg, Onion AFT: 25,480 kg, Onion CN: 7,760 kg, Carrot: 5,830 kg, Purple Potato: 1,690 kg",
+      "Source": "User Explicit Directive (04/09/69 Stock Audit Baseline)"
+    },
+    {
+      "Timestamp": "2026-09-05T19:58:27.544Z",
+      "Item": "Stock Baseline Update",
+      "Details": "Cabbage: 8,800 kg, Onion AFT: 25,480 kg, Onion CN: 7,010 kg, Carrot: 4,090 kg, Purple Potato: 1,690 kg",
+      "Source": "User Explicit Directive (05/09/69 Stock Audit)"
+    },
     {
       "Timestamp": "2026-09-05T19:01:58.347Z",
       "Item": "Cabbage",
@@ -91,5 +103,35 @@
   ],
   "ProcessedEvents": [
     "telegram:1532466397:1319:Cabbage_Yield_AFT"
+  ],
+  "RecentAudits": [
+    {
+      "AsOfDate": "05/09/69",
+      "Label": "ตรวจนับจริง 05/09/69 (ล่าสุด)",
+      "Timestamp": "2026-09-05T19:58:27.000Z",
+      "Items": {
+        "Cabbage": 8800,
+        "Onion_AFT": 25480,
+        "Onion_Chinese": 7010,
+        "Carrot": 4090,
+        "Purple_Sweet_Potato": 1690,
+        "Yellow_Sweet_Potato": 342,
+        "Orange_Sweet_Potato": 390
+      }
+    },
+    {
+      "AsOfDate": "04/09/69",
+      "Label": "ตรวจนับจริง 04/09/69 (รอบก่อนหน้า)",
+      "Timestamp": "2026-09-04T12:00:00.000Z",
+      "Items": {
+        "Cabbage": 8800,
+        "Onion_AFT": 25480,
+        "Onion_Chinese": 7760,
+        "Carrot": 5830,
+        "Purple_Sweet_Potato": 1690,
+        "Yellow_Sweet_Potato": 342,
+        "Orange_Sweet_Potato": 390
+      }
+    }
   ]
 }

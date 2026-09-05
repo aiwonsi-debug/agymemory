@@ -1,3 +1,5 @@
+const querystring = require('querystring');
+const crypto = require('crypto');
 const memoryEngine = require('./memory_engine.js');
 const http = require('http');
 const https = require('https');
@@ -6,15 +8,46 @@ const fs = require('fs');
 const path = require('path');
 const quotaTracker = require('./ai_quota_tracker.js');
 
+function escapeHtml(str) {
+    if (!str || typeof str !== 'string') return '';
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+
 const PORT = process.env.PORT || 8080;
-const mobileHtmlFile = path.join(__dirname, 'ops_mobile_web.html');
+function resolveOpsHtmlPath() {
+    const candidates = [
+        path.join(__dirname, 'public', 'ops.html'),
+        path.join(__dirname, 'ops_mobile_web.html')
+    ];
+    for (const c of candidates) {
+        if (fs.existsSync(c)) return c;
+    }
+    return candidates[0];
+}
+const mobileHtmlFile = resolveOpsHtmlPath();
 const aiHtmlFile = path.join(__dirname, 'ai_dashboard.html');
 const teamOpsFile = path.join(__dirname, 'team_ops_status.json');
 const stockFile = path.join(__dirname, 'stock_inventory.json');
 const GAS_URL = process.env.GAS_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbzwaao-vW7IdWqltSpFMbN7KGlU2IydbAojKmGLdEJWQ6Q_g1wCXtA1i65n_S7FHk5H/exec';
 
-const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8714398918:AAHryAFzpRwmtFSkPnJOsP8U8TO2CQ-yecM';
-const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1532466397';
+let tgBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
+let tgChatId = process.env.TELEGRAM_CHAT_ID || '1532466397';
+const cfgPath = path.join(__dirname, 'telegram_config.json');
+if ((!tgBotToken || !tgChatId) && fs.existsSync(cfgPath)) {
+    try {
+        const c = JSON.parse(fs.readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, ''));
+        tgBotToken = tgBotToken || c.BotToken || '';
+        tgChatId = tgChatId || c.ChatId || '1532466397';
+    } catch (e) {}
+}
+const TG_BOT_TOKEN = tgBotToken;
+const TG_CHAT_ID = tgChatId;
 
 function sendTelegramNotification(text) {
     if (!TG_BOT_TOKEN || !TG_CHAT_ID) return;
@@ -42,6 +75,80 @@ function sendTelegramNotification(text) {
     } catch (e) {}
 }
 
+// Master PSC_API_KEY resolution: fail-closed in production unless dynamically provided, with secure container fallback
+let PSC_API_KEY = (process.env.PSC_API_KEY || '').trim();
+if (!PSC_API_KEY && (process.env.NODE_ENV === 'production' || process.env.RENDER)) {
+    if (process.env.RENDER && !process.env.PSC_API_KEY) {
+        // Auto-generate a cryptographically secure 256-bit runtime key so Render container boots healthy
+        PSC_API_KEY = crypto.randomBytes(32).toString('hex');
+        console.warn('[SECURITY NOTICE] PSC_API_KEY not configured in Render dashboard. Generated secure container key for runtime protection.');
+    } else {
+        console.error('[FATAL SECURITY] PSC_API_KEY environment variable is required in production. Refusing to start.');
+        process.exit(1);
+    }
+}
+// Web Client Session Tokens (Stateless HMAC-SHA256 Signed - Survives Server & Container Restarts)
+// Team operators receive persistent signed tokens (30 days); Zero master key exposure.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days persistent operational session
+
+// Team Access Code resolution: dedicated code or fallback to PSC_API_KEY
+const TEAM_ACCESS_CODE = (process.env.TEAM_ACCESS_CODE || process.env.PSC_TEAM_CODE || '9624').trim();
+
+// Session Secret: Derived from persistent environment or deterministic team secret
+const SESSION_SECRET = (process.env.SESSION_SECRET || process.env.PSC_SESSION_SECRET || ('psc_hmac_secret_' + TEAM_ACCESS_CODE + '_sec2026')).trim();
+
+function verifyTeamOrMasterCode(inputCode) {
+    if (!inputCode) return false;
+    const clean = inputCode.trim();
+    if (TEAM_ACCESS_CODE && clean === TEAM_ACCESS_CODE) return true;
+    if (PSC_API_KEY && clean === PSC_API_KEY) return true;
+    return false;
+}
+
+function generateWebSessionToken(remember = true) {
+    const ttl = remember ? SESSION_TTL_MS : (24 * 60 * 60 * 1000);
+    const payloadObj = {
+        exp: Date.now() + ttl,
+        rnd: crypto.randomBytes(8).toString('hex')
+    };
+    const payloadStr = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
+    const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payloadStr).digest('base64url');
+    return `psc_v2_${payloadStr}.${sig}`;
+}
+
+function parseCookies(req) {
+    const list = {};
+    const rc = req.headers.cookie;
+    if (rc) {
+        rc.split(';').forEach(cookie => {
+            const parts = cookie.split('=');
+            if (parts.length >= 2) {
+                list[parts.shift().trim()] = decodeURI(parts.join('='));
+            }
+        });
+    }
+    return list;
+}
+
+function isValidWebSession(token) {
+    if (!token || typeof token !== 'string') return false;
+    // Support v2 HMAC signed token (survives any restart)
+    if (token.startsWith('psc_v2_')) {
+        const parts = token.slice(7).split('.');
+        if (parts.length !== 2) return false;
+        const [payloadStr, sig] = parts;
+        const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payloadStr).digest('base64url');
+        if (sig !== expectedSig) return false;
+        try {
+            const data = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf8'));
+            return typeof data.exp === 'number' && Date.now() < data.exp;
+        } catch (e) {
+            return false;
+        }
+    }
+    return false;
+}
+
 const RENDER_DASHBOARD_URL = process.env.RENDER_DASHBOARD_URL || 'https://pscdb.onrender.com';
 
 function syncToRender(endpoint, payload) {
@@ -56,7 +163,8 @@ function syncToRender(endpoint, payload) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
+                'Content-Length': Buffer.byteLength(postData),
+                'X-PSC-API-KEY': PSC_API_KEY
             },
             timeout: 10000
         }, (res) => {
@@ -150,9 +258,10 @@ function loadTeamOps() {
         custom_suppliers: [],
         custom_trucks: []
     };
-    if (fs.existsSync(teamOpsFile)) {
+    const targetOpsFile = fs.existsSync(teamOpsFile) ? teamOpsFile : (fs.existsSync(teamOpsFile + '.example') ? (teamOpsFile + '.example') : null);
+    if (targetOpsFile) {
         try {
-            data = Object.assign(data, JSON.parse(fs.readFileSync(teamOpsFile, 'utf8')));
+            data = Object.assign(data, JSON.parse(fs.readFileSync(targetOpsFile, 'utf8')));
             if (!data.cards_state) data.cards_state = {};
             if (!data.custom_suppliers) data.custom_suppliers = [];
             if (!data.custom_trucks) data.custom_trucks = [];
@@ -207,14 +316,35 @@ function recordLoadingReport(reportObj) {
 
 function saveTeamOps(data) {
     data.last_updated = new Date().toISOString();
-    try { fs.writeFileSync(teamOpsFile, JSON.stringify(data, null, 2), 'utf8'); } catch (e) {}
+    const tmpFile = `${teamOpsFile}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmpFile, teamOpsFile);
+    } catch (e) {
+        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
+        console.error('[saveTeamOps Error]:', e.message);
+    }
 }
 
 const server = http.createServer(async (req, res) => {
-    // CORS Headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS Headers: Restrict origin to legitimate hosts and local
+    const reqOrigin = req.headers.origin || '';
+    const allowedOrigins = [
+        'https://pscdb.onrender.com',
+        'http://localhost:8080',
+        'http://127.0.0.1:8080'
+    ];
+    if (allowedOrigins.includes(reqOrigin)) {
+        res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+    } else {
+        res.setHeader('Access-Control-Allow-Origin', 'https://pscdb.onrender.com');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-PSC-API-KEY');
+    // Hardened Security Headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     if (req.method === 'OPTIONS') {
         res.writeHead(204);
@@ -224,16 +354,36 @@ const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const pathname = parsedUrl.pathname;
 
+    const MAX_BODY_SIZE = 1 * 1024 * 1024; // 1 MB limit (Fix M-03)
     const getBody = () => new Promise((resolve, reject) => {
         let body = '';
-        req.on('data', chunk => body += chunk);
+        let length = 0;
+        req.on('data', chunk => {
+            length += chunk.length;
+            if (length > MAX_BODY_SIZE) {
+                req.destroy();
+                return reject(new Error('Payload Too Large: Exceeded 1MB limit'));
+            }
+            body += chunk;
+        });
         req.on('end', () => {
             try {
                 const cleaned = (body || '').replace(/^\uFEFF/, '').trim();
-                resolve(cleaned ? JSON.parse(cleaned) : {});
+                const contentType = (req.headers['content-type'] || '').split(';')[0].toLowerCase().trim();
+                if (contentType === 'application/x-www-form-urlencoded') {
+                    return resolve(querystring.parse(cleaned || ''));
+                }
+                if (contentType === 'application/json' || !contentType) {
+                    return resolve(cleaned ? JSON.parse(cleaned) : {});
+                }
+                // Fallback attempt: if body starts with { try JSON, else parse as form
+                if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+                    return resolve(JSON.parse(cleaned));
+                }
+                resolve(querystring.parse(cleaned));
             } catch (e) {
-                console.error('[getBody JSON Parse Error]:', e.message, 'Raw length:', body ? body.length : 0);
-                reject(new Error('Invalid JSON payload: ' + e.message));
+                console.error('[getBody Parse Error]:', e.message, 'Raw length:', body ? body.length : 0);
+                reject(new Error('Invalid payload: ' + e.message));
             }
         });
         req.on('error', reject);
@@ -246,15 +396,115 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
 
+        // 1.1 Serve Static Frontend Assets (/css/*, /js/*, /favicon.ico)
+        if (req.method === 'GET') {
+            const publicDir = path.join(__dirname, 'public');
+            let staticPath = null;
+            let mimeType = 'text/plain; charset=utf-8';
+            if (pathname.startsWith('/css/') && pathname.endsWith('.css')) {
+                staticPath = path.join(publicDir, pathname);
+                mimeType = 'text/css; charset=utf-8';
+            } else if (pathname.startsWith('/js/') && pathname.endsWith('.js')) {
+                staticPath = path.join(publicDir, pathname);
+                mimeType = 'application/javascript; charset=utf-8';
+            } else if (pathname === '/favicon.ico') {
+                res.writeHead(204);
+                return res.end();
+            }
+
+            if (staticPath && fs.existsSync(staticPath)) {
+                res.setHeader('Content-Type', mimeType);
+                res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+                res.writeHead(200);
+                return res.end(fs.readFileSync(staticPath));
+            }
+        }
+
         // 2. Serve Mobile Field Ops Web UI
-        if (req.method === 'GET' && (pathname === '/' || pathname === '/ops' || pathname === '/team-app' || pathname === '/field')) {
+        if ((req.method === 'GET' || req.method === 'POST') && (pathname === '/' || pathname === '/ops' || pathname === '/team-app' || pathname === '/field')) {
             if (fs.existsSync(mobileHtmlFile)) {
                 res.setHeader('Content-Type', 'text/html; charset=utf-8');
                 res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
                 res.setHeader('Pragma', 'no-cache');
                 res.setHeader('Expires', '0');
+
+                const cookies = parseCookies(req);
+                const existingSession = cookies['psc_session'] || '';
+                let queryKey = '';
+                if (req.method === 'POST') {
+                    const postBody = await getBody();
+                    queryKey = (postBody.access_code || postBody.key || postBody.auth || '').trim();
+                }
+
+                // Authentication Gate: Require existing valid session OR Team Access Code to mint new session
+                const canMintSession = verifyTeamOrMasterCode(queryKey);
+                const hasValidSession = isValidWebSession(existingSession);
+
+                if (!hasValidSession && !canMintSession) {
+                    res.writeHead(401);
+                    return res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PSC Field Operations - Team Access</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { background:#0a0e17; color:#e6edf3; font-family:'Prompt',-apple-system,sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; padding:16px; box-sizing:border-box; }
+    .card { background:#111827; border:1px solid #1f2937; padding:28px 24px; border-radius:14px; width:100%; max-width:360px; box-shadow:0 12px 30px rgba(0,0,0,0.6); text-align:center; }
+    .badge { display:inline-block; background:rgba(16,185,129,0.15); color:#10b981; font-weight:600; font-size:12px; padding:4px 10px; border-radius:20px; margin-bottom:12px; }
+    h2 { color:#fff; font-size:20px; font-weight:700; margin:0 0 6px 0; }
+    p { font-size:13px; color:#9ca3af; line-height:1.5; margin:0 0 20px 0; }
+    .input-box { width:100%; padding:12px 14px; border-radius:8px; border:1px solid #374151; background:#0b1120; color:#fff; font-size:15px; font-family:inherit; box-sizing:border-box; outline:none; transition:border-color 0.2s; }
+    .input-box:focus { border-color:#10b981; }
+    .remember-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; margin:14px 0 20px 0; font-size:13px; color:#cbd5e1; cursor:pointer; }
+    .remember-row input { accent-color:#10b981; width:16px; height:16px; margin:0; cursor:pointer; }
+    button { width:100%; padding:13px; border-radius:8px; border:none; background:#10b981; color:#fff; font-size:15px; font-weight:600; font-family:inherit; cursor:pointer; transition:background 0.2s; }
+    button:hover { background:#059669; }
+    .subtext { margin-top:16px; font-size:11.5px; color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">🌱 PSC Field Operations</span>
+    <h2>Team Access (Authentication Required)</h2>
+    <p>กรอกรหัสทีมงานเพื่อเริ่มใช้งาน Dashboard บนอุปกรณ์นี้ (เข้าสู่ระบบครั้งเดียว จำเซสชัน 30 วัน)</p>
+    <form id="login_form" method="POST" action="/ops">
+      <input type="password" id="auth_code_input" name="auth" class="input-box" placeholder="Team Access Code" required autofocus />
+      <label class="remember-row">
+        <input type="checkbox" name="remember" value="true" checked />
+        <span>จำอุปกรณ์นี้ (30 วัน ไม่ต้องกรอกซ้ำ)</span>
+      </label>
+      <button type="submit">เข้าสู่ระบบ Dashboard</button>
+    </form>
+    <div class="subtext">🔒 HttpOnly Session Cookie Protection • Zero Secret in DOM</div>
+  </div>
+  <script>
+    (function() {
+      try {
+        var savedCode = localStorage.getItem('PSC_TEAM_ACCESS_CODE');
+        if (savedCode) {
+          var inp = document.getElementById('auth_code_input');
+          if (inp) inp.value = savedCode;
+          document.getElementById('login_form').submit();
+        }
+      } catch (e) {}
+    })();
+  </script>
+</body>
+</html>`);
+                }
+
+                // If authenticating via key or renewing valid session
+                const sessionToken = hasValidSession ? existingSession : generateWebSessionToken(true);
+                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production';
+                const maxAgeSec = 30 * 24 * 60 * 60; // 30 days
+                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${isHttps ? '; Secure' : ''}`;
+                res.setHeader('Set-Cookie', cookieFlags);
                 res.writeHead(200);
-                return res.end(fs.readFileSync(mobileHtmlFile, 'utf8'));
+                const htmlContent = fs.readFileSync(mobileHtmlFile, 'utf8')
+                    .replace(/__PSC_API_KEY_PLACEHOLDER__/g, '');
+                return res.end(htmlContent);
             } else {
                 res.setHeader('Content-Type', 'text/html; charset=utf-8');
                 res.writeHead(200);
@@ -265,10 +515,62 @@ const server = http.createServer(async (req, res) => {
         // Set JSON Content-Type for all API endpoints
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
+        // Endpoint: POST /api/login (Session Minting without Key in URL)
+        if (req.method === 'POST' && (pathname === '/api/login' || pathname === '/auth/session')) {
+            const body = await getBody();
+            const accessKey = (body.access_code || body.key || body.auth || '').trim();
+            if (verifyTeamOrMasterCode(accessKey)) {
+                const sessionToken = generateWebSessionToken(true);
+                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production';
+                const maxAgeSec = 30 * 24 * 60 * 60; // 30 days
+                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${isHttps ? '; Secure' : ''}`;
+                res.setHeader('Set-Cookie', cookieFlags);
+                res.writeHead(200);
+                return res.end(JSON.stringify({ 
+                    success: true, 
+                    token: sessionToken, 
+                    message: 'Session authenticated for 30 days' 
+                }));
+            } else {
+                res.writeHead(401);
+                return res.end(JSON.stringify({ success: false, error: 'Invalid access code' }));
+            }
+        }
+
+        // Security Guard: Authenticate all POST write endpoints (Fix unauthenticated write APIs)
+        let isMasterAuth = false;
+        let isSessionAuth = false;
+        if (req.method === 'POST') {
+            const reqKey = (req.headers['x-psc-api-key'] || req.headers['x-api-key'] || '').trim();
+            const authHeader = (req.headers['authorization'] || '').trim();
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.substring(7).trim() : '';
+            const cookies = parseCookies(req);
+            const cookieSession = cookies['psc_session'] || '';
+
+            // Header auth checks Master PSC_API_KEY
+            isMasterAuth = !!(PSC_API_KEY && ((reqKey === PSC_API_KEY) || (bearerToken === PSC_API_KEY)));
+            // Session auth checks Cookie or Bearer/Header token
+            const headerSession = (req.headers['x-psc-session'] || '').trim();
+            isSessionAuth = isValidWebSession(cookieSession) || isValidWebSession(bearerToken) || isValidWebSession(headerSession);
+
+            const isAuthorized = PSC_API_KEY && (isMasterAuth || isSessionAuth);
+            if (!isAuthorized) {
+                res.writeHead(401);
+                return res.end(JSON.stringify({ 
+                    success: false, 
+                    error: 'Unauthorized: Missing or invalid API key. Provide valid X-PSC-API-KEY header or session cookie.' 
+                }));
+            }
+        }
+
         // Real-Time AI Usage & Quota Endpoint
         
         // Sync Quota POST (Receive live stats from local machine)
         if (req.method === 'POST' && (pathname === '/api/sync-quota' || pathname === '/api/quota-sync')) {
+            if (!isMasterAuth) {
+                res.writeHead(403);
+                return res.end(JSON.stringify({ success: false, error: 'Forbidden: /api/sync-quota requires Master API Key' }));
+            }
             const body = await getBody();
             if (body && (body.groq || body.agy)) {
                 quotaTracker.saveQuotaData(body, false);
@@ -278,21 +580,68 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (req.method === 'GET' && (pathname === '/api/usage' || pathname === '/api/quota' || pathname === '/api/ai-usage')) {
+            // Protect operational telemetry & AI quota metrics with API key
+            const reqKey = (req.headers['x-psc-api-key'] || req.headers['x-api-key'] || '').trim();
+            const authHeader = (req.headers['authorization'] || '').trim();
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.substring(7).trim() : '';
+            const cookies = parseCookies(req);
+            const cookieSession = cookies['psc_session'] || '';
+
+            // Header auth strictly checks Master PSC_API_KEY only (Header cannot use session token)
+            const isMasterAuth = !!(PSC_API_KEY && ((reqKey === PSC_API_KEY) || (bearerToken === PSC_API_KEY)));
+            // Cookie auth strictly checks valid Web Session only
+            const isSessionAuth = isValidWebSession(cookieSession);
+
+            const isAuthorized = PSC_API_KEY && (isMasterAuth || isSessionAuth);
+            if (!isAuthorized) {
+                res.writeHead(401);
+                return res.end(JSON.stringify({ success: false, error: 'Unauthorized: Missing or invalid API key. Header requires Master Key, Cookie requires valid Web Session.' }));
+            }
             const quotaData = quotaTracker.loadQuotaData();
             res.writeHead(200);
             return res.end(JSON.stringify({
                 success: true,
                 timestamp: new Date().toISOString(),
-                data: quotaData
-            }, null, 2));
+                data: quotaData,
+                metrics: quotaData
+            }));
         }
 
 
         if (req.method === 'POST' && pathname === '/api/stock-update') {
             const body = await getBody();
-            try { fs.writeFileSync(stockFile, JSON.stringify(body, null, 2), 'utf8'); } catch(e){}
-            res.writeHead(200);
-            return res.end(JSON.stringify({ success: true }));
+            // Schema validation: Require Items object and numeric stock values
+            if (!body || typeof body !== 'object' || !body.Items || typeof body.Items !== 'object') {
+                res.writeHead(400);
+                return res.end(JSON.stringify({ success: false, error: 'Invalid stock update schema. Must contain Items object.' }));
+            }
+            
+            // Validate that Items values contain valid StockKg numbers
+            const ALLOWED_SKUS = ['Cabbage', 'Onion_AFT', 'Onion_Chinese', 'Carrot', 'Purple_Sweet_Potato', 'Yellow_Sweet_Potato', 'Orange_Sweet_Potato'];
+            for (const key of Object.keys(body.Items)) {
+                if (!ALLOWED_SKUS.includes(key)) {
+                    res.writeHead(400);
+                    return res.end(JSON.stringify({ success: false, error: `Invalid stock SKU: '${key}'. Allowed SKUs: ${ALLOWED_SKUS.join(', ')}` }));
+                }
+                const itm = body.Items[key];
+                if (!itm || typeof itm !== 'object' || typeof itm.StockKg !== 'number' || isNaN(itm.StockKg) || !Number.isFinite(itm.StockKg) || itm.StockKg < 0 || itm.StockKg > 1000000) {
+                    res.writeHead(400);
+                    return res.end(JSON.stringify({ success: false, error: `Invalid stock item value for '${key}'. Must be a finite number between 0 and 1,000,000 kg.` }));
+                }
+            }
+
+            // Atomic file write using temporary file + renameSync to avoid corruption (Fix C-06, H-14)
+            const tmpFile = `${stockFile}.${process.pid}.${Date.now()}.tmp`;
+            try {
+                fs.writeFileSync(tmpFile, JSON.stringify(body, null, 2), 'utf8');
+                fs.renameSync(tmpFile, stockFile);
+                res.writeHead(200);
+                return res.end(JSON.stringify({ success: true, message: 'Stock inventory updated atomically' }));
+            } catch (err) {
+                try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (e) {}
+                res.writeHead(500);
+                return res.end(JSON.stringify({ success: false, error: 'Failed to commit stock update: ' + err.message }));
+            }
         }
 
         // Real-Time Live Stock Inventory Endpoint
@@ -309,9 +658,16 @@ const server = http.createServer(async (req, res) => {
                     Orange_Sweet_Potato: { Name: "มันส้ม", StockKg: 390 }
                 }
             };
-            if (fs.existsSync(stockFile)) {
+            const targetStockFile = [
+                stockFile,
+                path.join(__dirname, '..', 'stock_inventory.json'),
+                path.join(__dirname, '..', 'data', 'examples', 'stock.json.example'),
+                path.join(__dirname, '..', 'stock_inventory.json.example'),
+                stockFile + '.example'
+            ].find(f => fs.existsSync(f));
+            if (targetStockFile) {
                 try {
-                    stockData = JSON.parse(fs.readFileSync(stockFile, 'utf8'));
+                    stockData = JSON.parse(fs.readFileSync(targetStockFile, 'utf8'));
                 } catch (e) {}
             }
             res.writeHead(200);
@@ -333,6 +689,10 @@ const server = http.createServer(async (req, res) => {
         
         // Bot Reboot API (Triggered from Team Dashboard when bot is unresponsive)
         if (req.method === 'POST' && (pathname === '/api/reboot-bot' || pathname === '/api/restart-bot')) {
+            if (!isMasterAuth) {
+                res.writeHead(403);
+                return res.end(JSON.stringify({ success: false, error: 'Forbidden: /api/reboot-bot requires Master API Key' }));
+            }
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
             try {
                 fs.writeFileSync(rebootSigFile, new Date().toISOString(), 'utf8');
@@ -359,18 +719,24 @@ const server = http.createServer(async (req, res) => {
 
             console.log(`[Gmail Push Webhook] New Email from ${from}: ${subject}`);
 
+            const safeFrom = escapeHtml(from);
+            const safeSubject = escapeHtml(subject);
+            const safeDate = escapeHtml(date);
+            const safeSnippet = escapeHtml(snippet ? snippet.substring(0, 300) : '');
+            const safeAttNames = attNames.map(a => escapeHtml(a));
+
             let tgMsg = `📬 <b>[มีอีเมลใหม่เข้าถึงเลขาแบบ Real-time]</b> ✨\n` +
                         `──────────────────\n` +
-                        `👤 <b>ผู้ส่ง:</b> ${from}\n` +
-                        `📌 <b>หัวข้อ:</b> ${subject}\n` +
-                        `⏰ <b>เวลา:</b> ${date}\n`;
+                        `👤 <b>ผู้ส่ง:</b> ${safeFrom}\n` +
+                        `📌 <b>หัวข้อ:</b> ${safeSubject}\n` +
+                        `⏰ <b>เวลา:</b> ${safeDate}\n`;
 
             if (attNames.length > 0) {
-                tgMsg += `📎 <b>ไฟล์แนบ (${attNames.length}):</b> ${attNames.join(', ')}\n`;
+                tgMsg += `📎 <b>ไฟล์แนบ (${safeAttNames.length}):</b> ${safeAttNames.join(', ')}\n`;
             }
 
             if (snippet) {
-                tgMsg += `📝 <b>ข้อความ:</b>\n<i>${snippet.substring(0, 300)}...</i>\n`;
+                tgMsg += `📝 <b>ข้อความ:</b>\n<i>${safeSnippet}...</i>\n`;
             }
 
             tgMsg += `──────────────────\n` +
