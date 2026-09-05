@@ -1377,14 +1377,10 @@ function runGlm(chatId, promptText) {
     }
 }
 
-function handleIncomingMessage(msg) {
-    if (!msg || !msg.chat) return;
-    const chatId = msg.chat.id;
-    const text = (msg.text || '').trim();
-    if (!text) {
-        if (msg.photo && msg.photo.length > 0) {
-            handlePhotoMessage(chatId, msg);
-        }
+function handleCommand(chatId, text, msg = null) {
+    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
+    if (!ALLOWED_ADMINS.includes(chatId.toString())) {
+        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
         return;
     }
     const lower = text.toLowerCase();
