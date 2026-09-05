@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-04T02:38:11.110Z",
+  "last_updated": "2026-09-05T14:49:02.346Z",
   "active_operations": [
     {
       "id": "OPS-20260901-7833",
@@ -325,7 +325,7 @@
   "cards_state": {
     "salaya_0209": {
       "id": "salaya_0209",
-      "loadedReported": true,
+      "loadedReported": false,
       "loadedDate": "01/09/26",
       "loadedItem": "กะหล่ำปลี<br>เฮียหนิง",
       "loadedWeight": "8,715 kg (รับเข้า 8,500 kg)",
@@ -338,7 +338,9 @@
       "receivedSize": "กลาง",
       "receivedCondition": "สภาพโดยรวมดี แมง+ราเล็กน้อย",
       "receivedPrice": 3,
-      "transitLoss": "215 kg (2.47%)"
+      "transitLoss": "215 kg (2.47%)",
+      "supplier": "สวนทดสอบ CAR1",
+      "truck": "รถ 6 ล้อ"
     },
     "salaya_0309": {
       "id": "salaya_0309",
@@ -395,8 +397,22 @@
       "orderChecked": false,
       "truckChecked": false,
       "loadedReported": false
+    },
+    "test": {
+      "id": "test"
+    },
+    "0209": {
+      "id": "0209",
+      "supplier": "สวนเชียงใหม่ (ทดสอบ Cookie Auth)",
+      "truck": "รถ 6 ล้อ"
     }
   },
-  "custom_suppliers": [],
-  "custom_trucks": []
+  "custom_suppliers": [
+    "สวนเชียงใหม่ (ทดสอบ Cookie Auth)",
+    "Hack test",
+    "สวนทดสอบ CAR1"
+  ],
+  "custom_trucks": [
+    "รถ 6 ล้อ"
+  ]
 }
