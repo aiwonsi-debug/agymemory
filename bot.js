@@ -7,6 +7,7 @@ const path = require('path');
 const { exec, spawn } = require('child_process');
 const memoryEngine = require('./memory_engine.js');
 const quotaTracker = require('./ai_quota_tracker.js');
+const { formatPoDetailsForNotification } = require('./po_detail_formatter.js');
 
 // Helper to execute commands in 100% hidden background mode (no popup cmd/powershell windows)
 function execSilent(command, options, callback) {
@@ -380,8 +381,15 @@ async function autoCheckGmail() {
             writeLog(`Found ${matches.length} genuinely new PO files!`);
             if (adminChatId) {
                 let r = `[ตรวจพบใบสั่งซื้อ PO ใหม่เข้า Gmail]\n\n`;
-                matches.forEach(m => { r += `• ${m.replace('[SAVED]', '').trim()}\n`; });
-                r += `\nอัปเดตไฟล์ Excel และ GT Schedule เรียบร้อยแล้ว`;
+                matches.forEach(m => {
+                    const cleanM = m.replace('[SAVED]', '').trim();
+                    r += `• ${cleanM}\n`;
+                    try {
+                        const detail = formatPoDetailsForNotification(cleanM);
+                        if (detail) r += detail + '\n';
+                    } catch(e) {}
+                });
+                r += `อัปเดตไฟล์ Excel, GT Schedule และ Dashboard บนเว็บเรียบร้อยแล้ว`;
                 sendMessage(adminChatId, r);
             }
         }
@@ -504,6 +512,12 @@ function getDashboardSummary() {
 }
 
 function handleCallbackQuery(cq) {
+    const cqChatId = cq.message ? String(cq.message.chat.id) : '';
+    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
+    if (cqChatId && !ALLOWED_ADMINS.includes(cqChatId)) {
+        answerCallbackQuery(cq.id, '⛔ ไม่ได้รับอนุญาต (Unauthorized)', true);
+        return;
+    }
     const cqId = cq.id;
     const msg = cq.message;
     if (!msg) return;
@@ -543,10 +557,15 @@ function handleCallbackQuery(cq) {
                 let textResult = `📬 [ผลการตรวจเช็ก Gmail ล่าสุด]\n\n`;
                 if (matches && matches.length > 0) {
                     textResult += `🎉 ตรวจพบ ${matches.length} ไฟล์ใหม่:\n`;
-                    matches.slice(0, 8).forEach(m => { textResult += `• ${m.replace('[SAVED]', '').trim()}\n`; });
-                    textResult += `\nอัปเดตไฟล์ Excel และ GT Schedule เรียบร้อยแล้ว`;
-                } else {
-                    textResult += `✅ สแกนอีเมลล่าสุดเรียบร้อย (ไม่พบไฟล์ PO ใหม่เพิ่มเติม ข้อมูลเป็นปัจจุบันแล้ว)`;
+                    matches.slice(0, 8).forEach(m => {
+                        const cleanM = m.replace('[SAVED]', '').trim();
+                        textResult += `• ${cleanM}\n`;
+                        try {
+                            const detail = formatPoDetailsForNotification(cleanM);
+                            if (detail) textResult += detail + '\n';
+                        } catch(e) {}
+                    });
+                    textResult += `อัปเดตไฟล์ Excel, GT Schedule และ Dashboard บนเว็บเรียบร้อยแล้ว`;
                 }
                 editMessageText(chatId, messageId, textResult, backMarkup);
             }
@@ -558,7 +577,9 @@ function handleCallbackQuery(cq) {
                       `──────────────────\n` +
                       `🏢 1. Siam Yamamori (Sep 26)\n` +
                       `  • ส่ง 05/09 ➔ เตือน GT 03/09 (PO2357)\n` +
-                      `  • ส่ง 10/09 ➔ เตือน GT 08/09 (PO2358)\n\n` +
+                      `  • ส่ง 10/09 ➔ เตือน GT 08/09 (PO2358)\n` +
+                      `  • ส่ง 14/09 ➔ เตือน GT 12/09 (PO2424)\n` +
+                      `  • ส่ง 16/09 ➔ เตือน GT 14/09 (PO2425)\n\n` +
                       `🏢 2. AFT (Ajinomoto Sep 26 Rev.00)\n` +
                       `  • ส่ง 01/09 (อ.) ➔ เตือน 31/08 12:00 น.\n` +
                       `  • ส่ง 03/09 (พฤ.) ➔ เตือน 02/09 12:00 น.\n` +
@@ -589,9 +610,11 @@ function handleCallbackQuery(cq) {
                       `🏢 3. <b>Siam Yamamori</b>\n` +
                       `  • PO2357 (05/09): แครอท 180kg, หอมใหญ่ 625kg\n` +
                       `  • PO2358 (10/09): แครอท 136kg, หอมใหญ่ 1,150kg\n` +
-                      `  ➔ <b>รวม Yamamori: 2,091 kg (69,588 บ.)</b>\n` +
+                      `  • PO2424 (14/09): แครอท 136kg, หอมใหญ่ 605kg\n` +
+                      `  • PO2425 (16/09): หอมใหญ่ 920kg\n` +
+                      `  ➔ <b>รวม Yamamori: 3,752 kg (126,936 บ.)</b>\n` +
                       `━━━━━━━━━━━━━━━━━━━━\n` +
-                      `🌟 <b>ยอดรวมทั้ง 3 โรงงาน: 111,605 kg</b>\n\n` +
+                      `🌟 <b>ยอดรวมทั้ง 3 โรงงาน: 113,266 kg</b>` +
                       ``;
         editMessageText(chatId, messageId, reply, backMarkup);
     }
@@ -721,6 +744,12 @@ async function pollUpdates() {
                     const fileId = doc.file_id;
                     const chatId = String(upd.message.chat.id);
                     
+                    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
+                    if (!ALLOWED_ADMINS.includes(chatId)) {
+                        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์อัปโหลดหรือแก้ไขไฟล์ในระบบ (Unauthorized)');
+                        continue;
+                    }
+
                     sendMessage(chatId, `📥 กำลังรับไฟล์: ${docName} (${Math.round((doc.file_size || 0)/1024)} KB)...`);
                     
                     tgRequest(`getFile?file_id=${fileId}`).then(fRes => {
@@ -765,13 +794,8 @@ async function pollUpdates() {
                 
                 writeLog(`[TG Message] From ${name} (${chatId}): ${text}`);
                 
-                if (adminChatId !== chatId) {
-                    adminChatId = chatId;
-                    config.ChatId = adminChatId;
-                    try { fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch (e) {}
-                }
-                
-                handleCommand(chatId, text);
+                // Fix C-01: Removed dynamic admin promotion
+                handleCommand(chatId, text, msg);
             }
         }
     } catch (err) {
@@ -789,15 +813,189 @@ function sendChatAction(chatId, action = 'typing') {
 
 
 // ==========================================
-// 🚀 GROQ FAST FALLBACK ENGINE (AUTO-FAILOVER)
+// 👑 OKMD PLAYGROUND ENGINE (PRIMARY AI ENGINE - OPENAI COMPATIBLE)
 // ==========================================
+function getOkmdApiKey() {
+    let key = (process.env.OKMD_API_KEY || '').trim();
+    if (!key) {
+        const keyFile = path.join(agyBaseDir, 'okmd_api_key.txt');
+        if (fs.existsSync(keyFile)) {
+            try { key = fs.readFileSync(keyFile, 'utf8').trim(); } catch(e){}
+        }
+    }
+    if (!key) {
+        key = 'sk_MismwQxtgd7y6eif01zEH5ayVAKfx7zTpCmFUnJE0R91FEwKppA93unYLYV7uk7T';
+    }
+    return key;
+}
+
+const OKMD_CONFIG = {
+    get ApiKey() { return getOkmdApiKey(); },
+    BaseUrl: 'https://gen.ai.kku.ac.th/okmd/api/v1',
+    Model: 'deepseek-v4-pro',
+    Provider: 'Deepseek'
+};
+
+async function runOkmdEngine(chatId, promptText, customModel = null) {
+    const activeKey = getOkmdApiKey();
+    if (!activeKey) {
+        runGroqFallback(chatId, promptText, 'OKMD API Key is missing');
+        return;
+    }
+
+    const modelToUse = customModel || OKMD_CONFIG.Model || 'deepseek-v4-pro';
+    sendChatAction(chatId, 'typing');
+
+    memoryEngine.autoLearnFromText(promptText);
+
+    const fullContextPrompt = memoryEngine.buildAgyContextPrompt(promptText);
+    const systemPrompt = 'คุณคือ "น้องเลขา AI" ผู้ช่วยบริหารจัดการงานปฏิบัติการ PSC Operations (ผักสด, ขนส่ง, สต็อก, คำสั่งซื้อ)\n' +
+                         'คุณต้องปฏิบัติตามกฎเกณฑ์ต่อไปนี้อย่างเคร่งครัด:\n' +
+                         '1. ตอบเป็นภาษาไทยอย่างสุภาพ กระชับ ชัดเจน และเป็นมืออาชีพ (ใช้การ์ดข้อความและ Emoji เพื่อให้อ่านง่ายบนมือถือ)\n' +
+                         '2. ยึดมั่นในนโยบาย Zero Hallucination: ตัวเลขยอดสั่งซื้อ, วันที่ส่งมอบ, สต็อก, Yield และค่ารถ ต้องอ้างอิงจากข้อมูลที่มีในระบบเท่านั้น หากไม่มีให้ตอบว่า "ไม่พบข้อมูลในเอกสารล่าสุด" ห้ามคิดตัวเลขขึ้นเอง\n' +
+                         '3. หากผู้ใช้ถามเรื่องงานทั่วไป ให้ตอบและช่วยเหลืออย่างชาญฉลาดและตรงประเด็น';
+
+    const postData = JSON.stringify({
+        model: modelToUse,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: fullContextPrompt }
+        ],
+        temperature: 0.6,
+        max_tokens: 1500
+    });
+
+    try {
+        const targetUrl = new URL(OKMD_CONFIG.BaseUrl + '/chat/completions');
+        const req = https.request(targetUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + activeKey,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+            },
+            timeout: 35000
+        }, (res) => {
+            let resData = '';
+            res.on('data', chunk => resData += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(resData);
+                    if (parsed.choices && parsed.choices[0] && parsed.choices[0].message) {
+                        const reply = parsed.choices[0].message.content.trim();
+                        try {
+                            quotaTracker.recordOkmdUsage(parsed.usage || {}, parsed.model_quota || {}, modelToUse, parsed.provider || OKMD_CONFIG.Provider, promptText);
+                        } catch(e) {}
+                        memoryEngine.addConversationTurn(promptText, reply);
+
+                        const providerLabel = parsed.provider || 'OKMD';
+                        sendMessage(chatId, '👑 [' + providerLabel + ' ' + modelToUse + ']:\n\n' + reply);
+                    } else if (parsed.error) {
+                        writeLog('[OKMD Error]: ' + (parsed.error.message || JSON.stringify(parsed.error)));
+                        runGroqFallback(chatId, promptText, 'OKMD Error: ' + (parsed.error.message || 'API rejected'));
+                    } else {
+                        runGroqFallback(chatId, promptText, 'OKMD Unexpected Response');
+                    }
+                } catch(e) {
+                    writeLog('[OKMD Parse Error]: ' + resData);
+                    runGroqFallback(chatId, promptText, 'OKMD Parse Error');
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            writeLog('[OKMD Network Error]: ' + e.message);
+            runGroqFallback(chatId, promptText, 'OKMD Network: ' + e.message);
+        });
+
+        req.on('timeout', () => {
+            req.destroy();
+            writeLog('[OKMD Timeout]: Falling back to Groq');
+            runGroqFallback(chatId, promptText, 'OKMD Timeout (35s)');
+        });
+
+        req.write(postData);
+        req.end();
+    } catch(err) {
+        writeLog('[OKMD Exception]: ' + err.message);
+        runGroqFallback(chatId, promptText, 'OKMD Exception: ' + err.message);
+    }
+}
+
+// ==========================================
+// 🚀 GROQ FAST FALLBACK ENGINE (AUTO-FAILOVER) - ZERO HARDCODED KEY
+// ==========================================
+function getGroqApiKey() {
+    let key = (process.env.GROQ_API_KEY || '').trim();
+    if (!key) {
+        const keyFile = path.join(agyBaseDir, 'groq_api_key.txt');
+        if (fs.existsSync(keyFile)) {
+            try { key = fs.readFileSync(keyFile, 'utf8').trim(); } catch(e){}
+        }
+    }
+    return key;
+}
+
 const GROQ_CONFIG = {
-    ApiKey: process.env.GROQ_API_KEY || 'gsk_' + 'AG0CJ82avHjXecJNTPUhWGdyb3FYFg9MwaEOhtJX2C7aqdoEkM6l',
+    get ApiKey() { return getGroqApiKey(); },
     Model: 'qwen/qwen3.8-27b',
     Url: 'https://api.groq.com/openai/v1/chat/completions'
 };
 
+function extractStockFromText(rawText) {
+    if (!rawText || typeof rawText !== 'string') return null;
+    
+    // 1. Strict Exclusion Guard: Must NOT be an intake/shipment/yield/PO message
+    const hasIntakeOrOps = /(?:ขึ้นของ|รับเข้า|ขึ้นกะหล่ำ|ขึ้นหอม|กะหล่ำเข้า|หอมเข้า|ค่ารถ|เก็บปลายทาง|สุ่มปอก|ปอกได้|ทะเบียน|สั่งซื้อ|\bPO\b)/i.test(rawText);
+    if (hasIntakeOrOps) return null;
+
+    // 2. Strict Intent Guard: Must contain stock header or explicit inventory counting keywords
+    const hasStockIntent = /(?:^|\s|\n)(?:stock|สต็อก|สต๊อก|ยอดคงเหลือ|นับสต็อก|ตรวจนับสต็อก|นับจริง|คงคลัง)(?:[:\s\d\n=]|$)/i.test(rawText);
+    if (!hasStockIntent) return null;
+
+    // 3. Extract Date if present
+    const dateM = rawText.match(/(?:(?:stock|สต็อก|สต๊อก|วันที่|ณ\s*วันที่)\s*)?(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/i);
+    const date = dateM ? dateM[1] : null;
+
+    // 4. Strict Line-by-Line Item Extraction (Lookahead prevents false matches on boxes/bags/prices)
+    const inv = {};
+    let foundCount = 0;
+
+    const rules = [
+        { k: 'Cabbage', r: /(?:^|\n|\s)กะหล่ำ(?:ปลี)?\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Onion_AFT', r: /(?:^|\n|\s)หอม\s*AFT\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Onion_Chinese', r: /(?:^|\n|\s)หอมจีน\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Carrot', r: /(?:^|\n|\s)แครอท(?:สวย)?\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Purple_Sweet_Potato', r: /(?:^|\n|\s)มันม่วง(?:หัวเล็ก)?\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Yellow_Sweet_Potato', r: /(?:^|\n|\s)มันเหลือง(?:ไข่)?\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i },
+        { k: 'Orange_Sweet_Potato', r: /(?:^|\n|\s)มันส้ม\s*[:=\-]\s*([\d,]+(?:\.\d+)?)(?:\s*(?:กก\.?|kg|กิโล|กิโลกรัม))?(?=\s*(?:\n|$|\s))(?!.*(?:บาท|บ\.|\/กก|ถุง|กล่อง))/i }
+    ];
+
+    for (const rule of rules) {
+        const m = rawText.match(rule.r);
+        if (m) {
+            const val = parseFloat(m[1].replace(/,/g, ''));
+            if (Number.isFinite(val) && val >= 0 && val <= 1000000) {
+                inv[rule.k] = val;
+                foundCount++;
+            }
+        }
+    }
+
+    if (foundCount > 0) {
+        return { date: date, stock_inventory: inv };
+    }
+    return null;
+}
+
 async function runGroqFallback(chatId, promptText, failReason = 'AGY CLI Quota Reached') {
+    const activeKey = getGroqApiKey();
+    if (!activeKey) {
+        sendMessage(chatId, `⚡ [Auto-Failover]: ${failReason}\n⚠️ ไม่สามารถส่งต่อไปยัง Groq ได้เนื่องจากไม่ได้ตั้งค่า GROQ_API_KEY ในระบบ`);
+        writeLog('[Auto-Failover Warning]: Cannot fallback to Groq because GROQ_API_KEY is missing.');
+        return;
+    }
+
     sendMessage(chatId, `⚡ [Auto-Failover]: ${failReason}\nกำลังส่งต่อคำสั่งไปยัง Groq Fast Engine (${GROQ_CONFIG.Model}) อัตโนมัติ...`);
     sendChatAction(chatId, 'typing');
 
@@ -809,7 +1007,7 @@ async function runGroqFallback(chatId, promptText, failReason = 'AGY CLI Quota R
             { role: 'user', content: promptText }
         ],
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 500
     });
 
     try {
@@ -884,7 +1082,7 @@ function runAgyCli(chatId, promptText) {
     let timedOut = false;
     
     // Spawn with FULL REASONING (No effort limitation) and Full Tool Permissions
-    const child = spawn(agyExe, ['--continue', '-p', fullPrompt, '--dangerously-skip-permissions'], {
+    const child = spawn(agyExe, ['--continue', '-p', fullPrompt], {
         cwd: 'E:\\รวมงาน\\งาน 25-26',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1108,7 +1306,7 @@ function findCustomerOrders(query) {
     return reply.trim();
 }
 
-let currentAiEngine = config.DefaultEngine || 'agy'; // 'agy' or 'glm'
+let currentAiEngine = config.DefaultEngine || 'okmd'; // 'okmd', 'agy', or 'glm'
 
 // GLM (General Language Model / Zhipu AI / Open Weights) Engine Integration
 function runGlm(chatId, promptText) {
@@ -1170,19 +1368,28 @@ function runGlm(chatId, promptText) {
             });
         });
         
-        req.on('error', (e) => sendMessage(chatId, `[GLM Connection Error]: ${e.message}`));
+        req.on('error', (e) => sendMessage(chatId, `[GLM Network Error]: ${e.message}`));
         req.on('timeout', () => { req.destroy(); sendMessage(chatId, '[GLM Timeout]'); });
         req.write(postData);
         req.end();
     } catch (err) {
-        sendMessage(chatId, `[GLM Request Error]: ${err.message}`);
+        sendMessage(chatId, `[GLM Request Exception]: ${err.message}`);
     }
 }
 
-function handleCommand(chatId, text) {
+function handleIncomingMessage(msg) {
+    if (!msg || !msg.chat) return;
+    const chatId = msg.chat.id;
+    const text = (msg.text || '').trim();
+    if (!text) {
+        if (msg.photo && msg.photo.length > 0) {
+            handlePhotoMessage(chatId, msg);
+        }
+        return;
+    }
     const lower = text.toLowerCase();
     
-    // /model command to switch between GLM and AGY CLI
+    // /model command to switch between OKMD, GLM and AGY CLI
     if (lower === '/model' || lower.startsWith('/model ')) {
         const parts = text.trim().split(/\s+/);
         const targetModel = parts[1] ? parts[1].toLowerCase() : '';
@@ -1193,22 +1400,79 @@ function handleCommand(chatId, text) {
         }
 
         if (!targetModel) {
-            const currentEngineName = (currentAiEngine === 'glm') ? `GLM (${glmConfig.Model || 'glm-5.3-flash'})` : 'AGY CLI (Google Antigravity)';
-            const reply = `สถานะโมเดล AI ปัจจุบัน:\n\n` +
-                          `• Active Engine: ${currentEngineName}\n` +
-                          `• Model Name: ${glmConfig.Model || 'glm-5.3-flash'}\n` +
-                          `• Base URL: ${glmConfig.BaseUrl}\n` +
-                          `• API Key: ${glmConfig.ApiKey ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า'}\n\n` +
-                          `วิธีสลับโมเดล:\n` +
-                          `• /model glm (หรือ /model glm-5.3-flash) - สลับเป็น Open Weights GLM-5.3-Flash\n` +
-                          `• /model glm-4-flash - สลับเป็น GLM-4-Flash\n` +
-                          `• /model glm-4-plus - สลับเป็น GLM-4-Plus\n` +
-                          `• /model glm-3.6 - สลับเป็น GLM 3.6\n` +
-                          `• /model agy - เปลี่ยนโมเดลเริ่มต้นเป็น AGY CLI (Antigravity)`;
+            let currentEngineName = 'OKMD Playground (Deepseek-V4-Pro)';
+            if (currentAiEngine === 'okmd') currentEngineName = `OKMD (${OKMD_CONFIG.Model})`;
+            else if (currentAiEngine === 'agy') currentEngineName = 'AGY CLI (Google Antigravity Direct)';
+            else if (currentAiEngine === 'glm') currentEngineName = `GLM (${glmConfig.Model || 'glm-5.3-flash'})`;
+
+            const reply = `👑 <b>[สถานะ AI Engine ปัจจุบันของเลขา]</b>\n\n` +
+                          `• <b>Active Engine:</b> <b>${currentEngineName}</b>\n` +
+                          `• <b>OKMD Model:</b> <code>${OKMD_CONFIG.Model}</code>\n` +
+                          `• <b>โควต้า OKMD:</b> 180,000 tokens/วัน (Primary Brain)\n\n` +
+                          `📌 <b>วิธีเลือกหรือสลับโมเดล:</b>\n` +
+                          `• <code>/model deepseek</code> - Deepseek V4 Pro (ฉลาดมาก โควต้าสูง 180k)\n` +
+                          `• <code>/model claude</code> - Claude Sonnet 5 (ภาษาไทยระดับพรีเมียม)\n` +
+                          `• <code>/model gpt</code> - GPT-5.4 (โมเดลเรือธง OpenAI)\n` +
+                          `• <code>/model gemini</code> - Gemini 2.5 Flash Lite (เร็ว ประหยัด)\n` +
+                          `• <code>/model qwen</code> - Qwen 3.7 Plus (คำนวณและลอจิก)\n` +
+                          `• <code>/model agy</code> - สลับไปใช้ Google Antigravity CLI\n` +
+                          `• <code>/model glm</code> - สลับไปใช้ Open Weights GLM`;
             sendMessage(chatId, reply);
             return;
         }
 
+        // 1. Switch to OKMD Models
+        if (targetModel.includes('deepseek') || targetModel === 'ds' || targetModel === 'okmd') {
+            currentAiEngine = 'okmd';
+            config.DefaultEngine = 'okmd';
+            OKMD_CONFIG.Model = targetModel.includes('flash') ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
+            OKMD_CONFIG.Provider = 'Deepseek';
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OKMD (${OKMD_CONFIG.Model})\nพร้อมตอบคำถามทันใจและจำกฎธุรกิจทั้งหมดแล้วครับ! ✨`);
+            return;
+        }
+
+        if (targetModel.includes('claude') || targetModel.includes('sonnet')) {
+            currentAiEngine = 'okmd';
+            config.DefaultEngine = 'okmd';
+            OKMD_CONFIG.Model = targetModel.includes('4.6') ? 'claude-sonnet-4.6' : 'claude-sonnet-5';
+            OKMD_CONFIG.Provider = 'Claude';
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Claude (${OKMD_CONFIG.Model})\nภาษาไทยเนียนระดับพรีเมียม พร้อมทำงานทันทีครับ! 🌸`);
+            return;
+        }
+
+        if (targetModel.includes('gpt') || targetModel.includes('openai')) {
+            currentAiEngine = 'okmd';
+            config.DefaultEngine = 'okmd';
+            OKMD_CONFIG.Model = targetModel.includes('mini') ? 'gpt-5.4-mini' : 'gpt-5.4';
+            OKMD_CONFIG.Provider = 'OpenAI';
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OpenAI (${OKMD_CONFIG.Model})\nพร้อมประมวลผลคำสั่งแล้วครับ! ⚡`);
+            return;
+        }
+
+        if (targetModel.includes('gemini') || targetModel.includes('flash')) {
+            currentAiEngine = 'okmd';
+            config.DefaultEngine = 'okmd';
+            OKMD_CONFIG.Model = targetModel.includes('3.7') ? 'gemini-3.7-flash' : 'gemini-2.5-flash-lite';
+            OKMD_CONFIG.Provider = 'Gemini';
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Google Gemini (${OKMD_CONFIG.Model})\nความเร็วสูงพิเศษ พร้อมทำงานแล้วครับ! 🚀`);
+            return;
+        }
+
+        if (targetModel.includes('qwen')) {
+            currentAiEngine = 'okmd';
+            config.DefaultEngine = 'okmd';
+            OKMD_CONFIG.Model = 'qwen3.7-plus';
+            OKMD_CONFIG.Provider = 'Qwen';
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Qwen (${OKMD_CONFIG.Model})\nพร้อมคำนวณและวิเคราะห์ลอจิกแล้วครับ! 🧮`);
+            return;
+        }
+
+        // 2. Switch to GLM
         if (targetModel === 'glm' || targetModel.startsWith('glm') || targetModel.startsWith('chatglm')) {
             currentAiEngine = 'glm';
             config.DefaultEngine = 'glm';
@@ -1227,7 +1491,8 @@ function handleCommand(chatId, text) {
             return;
         }
 
-        if (targetModel === 'agy' || targetModel === 'gemini' || targetModel === 'default' || targetModel === 'antigravity') {
+        // 3. Switch to AGY CLI
+        if (targetModel === 'agy' || targetModel === 'antigravity') {
             currentAiEngine = 'agy';
             config.DefaultEngine = 'agy';
             fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
@@ -1235,7 +1500,7 @@ function handleCommand(chatId, text) {
             return;
         }
 
-        sendMessage(chatId, `ไม่รู้จักโมเดล "${targetModel}"\nสามารถเลือกได้: /model glm หรือ /model agy`);
+        sendMessage(chatId, `ไม่รู้จักโมเดล "${targetModel}"\nพิมพ์ /model เพื่อดูรายชื่อโมเดลทั้งหมดที่รองรับครับ`);
         return;
     }
 
@@ -1253,17 +1518,9 @@ function handleCommand(chatId, text) {
         return;
     }
 
-    // Set GLM API Key command
+    // Set GLM API Key command - DISABLED (Fix H-12)
     if (lower.startsWith('/set_glm_key ') || lower.startsWith('/glm_key ')) {
-        const key = text.substring(text.indexOf(' ') + 1).trim();
-        const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
-        let glmConfig = { Enabled: true, ApiKey: key, BaseUrl: 'https://open.bigmodel.cn/api/paas/v4', Model: 'glm-4-flash' };
-        if (fs.existsSync(glmCfgPath)) {
-            try { glmConfig = JSON.parse(fs.readFileSync(glmCfgPath, 'utf8').replace(/^\uFEFF/, '')); } catch(e){}
-        }
-        glmConfig.ApiKey = key;
-        fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
-        sendMessage(chatId, `[GLM Config]\nบันทึก GLM API Key เรียบร้อยแล้ว!\nโมเดลปัจจุบัน: ${glmConfig.Model || 'glm-4-flash'}\nสามารถพิมพ์ /glm <ข้อความ> หรือ /model glm เพื่อใช้งานได้ทันที`);
+        sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่า API Key ในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง (Fix H-12)');
         return;
     }
     
@@ -1287,7 +1544,8 @@ function handleCommand(chatId, text) {
         }
         
         sendMessage(chatId, `🔍 กำลังค้นหาไฟล์ "${query || 'ที่ต้องการ'}" ในระบบ...`);
-        const searchRoots = ['E:\\รวมงาน\\งาน 25-26', 'C:\\Users\\624\\.gemini\\antigravity-cli\\scratch', 'E:\\agy'];
+        // Fix H-04: Confine file scanning to business docs folder only
+        const searchRoots = ['E:\\รวมงาน\\งาน 25-26'];
         const foundFiles = [];
         
         searchRoots.forEach(root => {
@@ -1338,12 +1596,7 @@ function handleCommand(chatId, text) {
 
     // 1. Direct Terminal Shell Command execution (/cmd or /sh)
     if (lower.startsWith('/cmd ') || lower.startsWith('/sh ') || lower.startsWith('/ps ')) {
-        const cmdToRun = text.substring(text.indexOf(' ') + 1).trim();
-        sendMessage(chatId, `⚡ กำลังรันคำสั่ง: ${cmdToRun}`);
-        execSilent(`powershell -NoProfile -WindowStyle Hidden -Command "${cmdToRun.replace(/"/g, '`"')}"`, { cwd: 'E:\\รวมงาน\\งาน 25-26', maxBuffer: 5 * 1024 * 1024 }, (err, stdout, stderr) => {
-            const out = (stdout || stderr || (err ? err.message : 'สำเร็จ (ไม่มี output)')).trim();
-            sendMessage(chatId, `[Terminal Output]:\n${out}`);
-        });
+        sendMessage(chatId, '⛔ ฟังก์ชันการรันคำสั่ง Shell ถูกปิดใช้งานถาวรเพื่อความปลอดภัยของระบบ (Fix C-02)');
         return;
     }
     
@@ -1453,13 +1706,22 @@ function handleCommand(chatId, text) {
             res.on('data', chunk => resData += chunk);
             res.on('end', () => {
                 try {
-                    const parsed = JSON.parse(resData);
-                    if (!parsed.choices || !parsed.choices[0] || !parsed.choices[0].message) {
+                    let parsed = null;
+                    let result = null;
+                    try { parsed = JSON.parse(resData); } catch(e){}
+
+                    if (parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content) {
+                        try { result = JSON.parse(parsed.choices[0].message.content.trim()); } catch(e){}
+                    }
+
+                    if (!result) {
+                        result = extractStockFromText(text);
+                    }
+
+                    if (!result) {
                         sendMessage(chatId, '❌ [AI Error]: ไม่สามารถสกัดข้อมูลได้');
                         return;
                     }
-
-                    const result = JSON.parse(parsed.choices[0].message.content.trim());
                     const { recordLoadingReport, syncToRender } = require('./webhook_server.js');
                     const lineNotifier = require('./line_notifier.js');
 
@@ -1485,7 +1747,7 @@ function handleCommand(chatId, text) {
                     }
 
                     let persistRequired = false;
-                    const telegramEventId = `telegram:${chatId}:${upd.message ? upd.message.message_id : Date.now()}`;
+                    const telegramEventId = `telegram:${chatId}:${(msg && msg.message_id) ? msg.message_id : Date.now()}`;
 
                     if (calcYield && (result.item || '').includes('กะหล่ำ')) {
                         if (!stock.Items.Cabbage) stock.Items.Cabbage = { Name: "กะหล่ำปลี", StockKg: 6075 };
@@ -1599,20 +1861,20 @@ function handleCommand(chatId, text) {
                         result.sample_kg || 
                         result.peeled_kg || 
                         calcYield ||
-                        rawText.includes('ขึ้นของ') ||
-                        rawText.includes('รับเข้า') ||
-                        rawText.includes('ขึ้นกะหล่ำ') ||
-                        rawText.includes('ขึ้นหอม') ||
-                        rawText.includes('กะหล่ำเข้า')
+                        text.includes('ขึ้นของ') ||
+                        text.includes('รับเข้า') ||
+                        text.includes('ขึ้นกะหล่ำ') ||
+                        text.includes('ขึ้นหอม') ||
+                        text.includes('กะหล่ำเข้า')
                     );
 
                     if (isIntakeOrLoading) {
                         let cardId = 'salaya_0309';
                         const rawTextLower = text.toLowerCase();
                         const dateStr = result.date || '';
-                        if (rawText.includes('หอมแดง')) {
+                        if (text.includes('หอมแดง')) {
                             cardId = (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709';
-                        } else if (rawText.includes('พริก')) {
+                        } else if (text.includes('พริก')) {
                             cardId = 'tns_pepper_1609';
                         } else if (dateStr.includes('07') || dateStr.includes('08')) {
                             cardId = 'salaya_0809';
@@ -1697,7 +1959,7 @@ function handleCommand(chatId, text) {
                                      (result.weight_kg ? `• น้ำหนัก: ${result.weight_kg.toLocaleString()} kg\n` : '') +
                                      (calcYield ? `• Yield: ${calcYield}%\n` : '') +
                                      (result.condition ? `• สภาพ: ${result.condition}\n` : '') +
-                                     `\n🌐 ดูรายละเอียดสด: https://pscdb.onrender.com`;
+                                     `\n🌐 ดูรายละเอียดสด: https://pscdb.onrender.com/ops\n🔑 Team Access Code: 9624 (กรอกครั้งเดียว จำเซสชัน 30 วัน)`;
                     lineNotifier.sendLineMessage(lineText).catch(e => {});
 
                 } catch(e) {
@@ -1987,27 +2249,7 @@ function handleCommand(chatId, text) {
         return;
     }
     else if (lower.startsWith('/set_hotmail ') || lower.startsWith('/set_outlook ')) {
-        const parts = text.split(/\s+/).slice(1);
-        if (parts.length < 2) {
-            sendMessage(chatId, `⚠️ วิธีตั้งค่า Hotmail / Outlook:\n\nพิมพ์:\n/set_hotmail <อีเมลของคุณ> <App_Password_16หลัก>\n\nตัวอย่าง:\n/set_hotmail company@hotmail.com abcd efgh ijkl mnop`);
-            return;
-        }
-        const email = parts[0].trim();
-        const appPass = parts.slice(1).join('').trim();
-        const hotmailCfgPath = path.join(agyBaseDir, 'hotmail_config.json');
-        const newCfg = {
-            EmailAddress: email,
-            AppPassword: appPass,
-            Server: "outlook.office365.com",
-            Port: 993,
-            LastSync: new Date().toISOString()
-        };
-        try {
-            fs.writeFileSync(hotmailCfgPath, JSON.stringify(newCfg, null, 2), 'utf8');
-            sendMessage(chatId, `✅ บันทึกการตั้งค่า Hotmail (${email}) เรียบร้อยแล้ว!\nพิมพ์ /check_hotmail เพื่อทดสอบดึงอีเมลทันที 📬`);
-        } catch(e) {
-            sendMessage(chatId, `❌ ไม่สามารถบันทึกไฟล์ตั้งค่า: ${e.message}`);
-        }
+        sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่ารหัสผ่านอีเมลในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง ไม่อนุญาตให้ส่งผ่านแชท (Fix H-12)');
         return;
     }
     else if (lower === '/check_hotmail' || lower === '/hotmail') {
@@ -2032,8 +2274,15 @@ function handleCommand(chatId, text) {
             const matches = out.match(/\[SAVED\]\s*([^\r\n]+)/g);
             if (matches && matches.length > 0) {
                 let r = `ดึงข้อมูลสำเร็จ พบ ${matches.length} ไฟล์ใหม่:\n`;
-                matches.slice(0, 10).forEach(m => { r += `• ${m.replace('[SAVED]', '').trim()}\n`; });
-                r += `\nอัปเดตไฟล์ Excel และ GT Schedule เรียบร้อยแล้ว`;
+                matches.slice(0, 10).forEach(m => {
+                    const cleanM = m.replace('[SAVED]', '').trim();
+                    r += `• ${cleanM}\n`;
+                    try {
+                        const detail = formatPoDetailsForNotification(cleanM);
+                        if (detail) r += detail + '\n';
+                    } catch(e) {}
+                });
+                r += `อัปเดตไฟล์ Excel, GT Schedule และ Dashboard บนเว็บเรียบร้อยแล้ว`;
                 sendMessage(chatId, r);
             } else {
                 sendMessage(chatId, 'ไม่มีอีเมล PO ใหม่เพิ่มเติม (ข้อมูลเป็นปัจจุบันแล้ว)');
@@ -2053,8 +2302,10 @@ function handleCommand(chatId, text) {
         return;
     }
     else {
-        // 4. Default Direct Route -> Google Antigravity CLI (AGY)
-        if (currentAiEngine === 'glm') {
+        // 4. Default Direct Route -> OKMD Playground (Primary) / AGY / GLM
+        if (currentAiEngine === 'okmd') {
+            runOkmdEngine(chatId, text);
+        } else if (currentAiEngine === 'glm') {
             runGlm(chatId, text);
         } else {
             runAgyCli(chatId, text);
