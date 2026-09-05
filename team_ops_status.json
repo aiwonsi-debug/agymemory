@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-09-05T14:49:02.346Z",
+  "last_updated": "2026-09-05T19:01:58.348Z",
   "active_operations": [
     {
       "id": "OPS-20260901-7833",
@@ -414,5 +414,31 @@
   ],
   "custom_trucks": [
     "รถ 6 ล้อ"
+  ],
+  "intake_records": [
+    {
+      "date": "05/09/69",
+      "item": "กะหล่ำปลี (เจ๊นก - ทางศาลายาสั่งเอง)",
+      "weight": "8,875 kg",
+      "yield": 64,
+      "size": "กลาง",
+      "condition": "สภาพโดยรวมพอใช้ แมง+ราค่อนข้างเยอะ",
+      "sample": "สุ่ม 100 kg ปอกได้ 64 kg (Yield 64%)",
+      "reportedAt": "2026-09-05T19:01:58.348Z"
+    }
+  ],
+  "field_reports": [
+    {
+      "cardId": "salaya_0509",
+      "date": "05/09/69",
+      "item": "กะหล่ำปลี (เจ๊นก)",
+      "weight": "8,875 kg",
+      "freight": "",
+      "payment": "ศาลายาสั่งเอง",
+      "location": "ศาลายา",
+      "receivedYield": 64,
+      "receivedSize": "กลาง",
+      "receivedCondition": "สภาพโดยรวมพอใช้ แมง+ราค่อนข้างเยอะ"
+    }
   ]
 }
