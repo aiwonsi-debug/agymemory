@@ -1,6 +1,6 @@
 {
   "AsOfDate": "05/09/69",
-  "LastUpdated": "2026-09-05T20:00:46.896Z",
+  "LastUpdated": "2026-09-06T00:43:24.298Z",
   "Items": {
     "Cabbage": {
       "Name": "กะหล่ำปลี",
@@ -25,17 +25,15 @@
     "Purple_Sweet_Potato": {
       "Name": "มันม่วงหัวเล็ก",
       "StockKg": 1690
-    },
-    "Yellow_Sweet_Potato": {
-      "Name": "มันเหลืองไข่",
-      "StockKg": 342
-    },
-    "Orange_Sweet_Potato": {
-      "Name": "มันส้ม",
-      "StockKg": 390
     }
   },
   "AuditTrail": [
+    {
+      "Timestamp": "2026-09-06T00:43:24.298Z",
+      "Item": "Stock Removal",
+      "Details": "นำมันเหลืองไข่และมันส้มออกจากสต็อกคงเหลือตามคำสั่งผู้ใช้งาน (สต็อกหมดแล้ว)",
+      "Source": "User Explicit Directive"
+    },
     {
       "Timestamp": "2026-09-05T20:18:11.230Z",
       "Item": "Stock History Record (04/09/69)",
@@ -114,9 +112,7 @@
         "Onion_AFT": 25480,
         "Onion_Chinese": 7010,
         "Carrot": 4090,
-        "Purple_Sweet_Potato": 1690,
-        "Yellow_Sweet_Potato": 342,
-        "Orange_Sweet_Potato": 390
+        "Purple_Sweet_Potato": 1690
       }
     },
     {
@@ -128,9 +124,7 @@
         "Onion_AFT": 25480,
         "Onion_Chinese": 7760,
         "Carrot": 5830,
-        "Purple_Sweet_Potato": 1690,
-        "Yellow_Sweet_Potato": 342,
-        "Orange_Sweet_Potato": 390
+        "Purple_Sweet_Potato": 1690
       }
     }
   ]
