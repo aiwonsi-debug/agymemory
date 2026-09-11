@@ -1380,16 +1380,8 @@ function runGlm(chatId, promptText) {
     }
 }
 
-function handleCommand(chatId, text, msg = null) {
-    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
-    if (!ALLOWED_ADMINS.includes(chatId.toString())) {
-        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
-        return;
-    }
-    const lower = text.toLowerCase();
-    
-    // /model command to switch between OKMD, GLM and AGY CLI
-    if (lower === '/model' || lower.startsWith('/model ')) {
+function handleModelSwitching(chatId, text, lower, msg) {
+
         const parts = text.trim().split(/\s+/);
         const targetModel = parts[1] ? parts[1].toLowerCase() : '';
         const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
@@ -1501,10 +1493,11 @@ function handleCommand(chatId, text, msg = null) {
 
         sendMessage(chatId, `ไม่รู้จักโมเดล "${targetModel}"\nพิมพ์ /model เพื่อดูรายชื่อโมเดลทั้งหมดที่รองรับครับ`);
         return;
-    }
 
-    // Set GLM Base URL (for Local Open Weights or Cloud API)
-    if (lower.startsWith('/set_glm_url ') || lower.startsWith('/glm_url ')) {
+}
+
+function handleSetGlmUrl(chatId, text, lower, msg) {
+
         const url = text.substring(text.indexOf(' ') + 1).trim();
         const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
         let glmConfig = { Enabled: true, ApiKey: '', BaseUrl: url, Model: 'glm-5.3-flash' };
@@ -1515,23 +1508,26 @@ function handleCommand(chatId, text, msg = null) {
         fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
         sendMessage(chatId, `[GLM Config]\nบันทึก Base URL เรียบร้อยแล้ว: ${url}\nโมเดล: ${glmConfig.Model}`);
         return;
-    }
 
-    // Set GLM API Key command - DISABLED (Fix H-12)
-    if (lower.startsWith('/set_glm_key ') || lower.startsWith('/glm_key ')) {
+}
+
+function handleSetGlmKey(chatId, text, lower, msg) {
+
         sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่า API Key ในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง (Fix H-12)');
         return;
-    }
     
-    // Explicit GLM command
-    if (lower.startsWith('/glm ') || lower.startsWith('/chatglm ')) {
+}
+
+function handleGlmExplicit(chatId, text, lower, msg) {
+
         const prompt = text.substring(text.indexOf(' ') + 1).trim();
         runGlm(chatId, prompt);
         return;
-    }
     
-    // 0. Smart File Request / Download Handler
-    if (lower.startsWith('ขอไฟล์') || lower.startsWith('ส่งไฟล์') || lower.startsWith('/file') || lower.startsWith('download') || lower.includes('ขอไฟล์') || lower.includes('ส่งไฟล์')) {
+}
+
+function handleFileRequest(chatId, text, lower, msg) {
+
         let query = text.replace(/^(ขอไฟล์|ส่งไฟล์|\/file|download)\s*/i, '').trim();
         if (query.toLowerCase().includes('master') || query.toLowerCase().includes('มาสเตอร์') || query.includes('ออเดอร์')) {
             const masterExcel = 'E:\\รวมงาน\\งาน 25-26\\Master_Order_Schedule_2026.xlsx';
@@ -1591,21 +1587,25 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, `❌ ไม่พบไฟล์ที่ตรงกับคำค้น "${query}" ในระบบ`);
             return;
         }
-    }
 
-    // 1. Direct Terminal Shell Command execution (/cmd or /sh)
-    if (lower.startsWith('/cmd ') || lower.startsWith('/sh ') || lower.startsWith('/ps ')) {
+}
+
+function handleTerminalCommand(chatId, text, lower, msg) {
+
         sendMessage(chatId, '⛔ ฟังก์ชันการรันคำสั่ง Shell ถูกปิดใช้งานถาวรเพื่อความปลอดภัยของระบบ (Fix C-02)');
         return;
-    }
     
-    // 2. Explicit AGY CLI command (/agy or /ai) - Optional since AGY is default direct handler
-    if (lower === '/agy' || lower === '/ai') {
+}
+
+function handleAgyCliPrompt(chatId, text, lower, msg) {
+
         sendMessage(chatId, `🤖 [Google Antigravity CLI พร้อมใช้งาน]\n\nคุณสามารถพิมพ์ข้อความสั่งงานได้โดยตรงทันทีโดยไม่ต้องใส่ /agy นำหน้าครับ! ✨`);
         return;
-    }
     
-      if (lower === '/miniapp' || lower === '/app' || lower === 'miniapp' || lower === '/dashboard') {
+}
+
+function handleMiniAppDashboard(chatId, text, lower, msg) {
+
           const replyMarkup = {
               inline_keyboard: [[
                   { text: '📊 เปิด AGY Dashboard (Mini App)', web_app: { url: 'https://pscdb.onrender.com' } }
@@ -1613,9 +1613,11 @@ function handleCommand(chatId, text, msg = null) {
           };
           sendMessage(chatId, 'คลิกปุ่มด้านล่างเพื่อเปิดหน้าต่าง Mini App ของระบบฐานข้อมูล:', replyMarkup);
           return;
-      }
 
-      if (lower === '/agy-customizations' || lower === '/customization') {
+}
+
+function handleAgyCustomizations(chatId, text, lower, msg) {
+
         const reply = `🛠️ [Google Antigravity Customization System]\n\n` +
                       `ระบบปรับแต่ง Antigravity (AGY) ช่วยเสริมประสิทธิภาพการทำงานเฉพาะด้าน:\n\n` +
                       `1. 📜 **Rules (กฎของโปรเจกต์):** ไฟล์ GEMINI.md, AGENTS.md สำหรับกำหนดสไตล์และข้อกำหนดการทำงาน\n` +
@@ -1626,29 +1628,19 @@ function handleCommand(chatId, text, msg = null) {
                       `💡 พิมพ์ข้อความในแชทนี้ได้โดยตรง ระบบจะส่งให้ AGY CLI ประมวลผลทันที`;
         sendMessage(chatId, reply);
         return;
-    }
-    if (lower.startsWith('/agy ') || lower.startsWith('/ai ')) {
+
+}
+
+function handleAgyExplicit(chatId, text, lower, msg) {
+
         const prompt = text.substring(text.indexOf(' ') + 1).trim();
         runAgyCli(chatId, prompt);
         return;
-    }
     
-    // 2.9 Field Ops Loading Report Auto-Parser & Dashboard Sync
-    const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
+}
 
-    // =========================================================================
-    // 🌟 UNIFIED AI PARSER (STOCK, INTAKE, LOADING & YIELD IN A SINGLE ENGINE)
-    // =========================================================================
-    const isOpsOrStockPattern = !hasNegation && (
-        text.includes('สต็อก') || text.includes('สต๊อก') || text.toLowerCase().includes('stock') ||
-        text.includes('ขึ้นของ') || text.includes('รับเข้า') || text.includes('ขึ้นกะหล่ำ') ||
-        text.includes('ขึ้นหอม') || text.includes('กะหล่ำเข้า') || text.includes('หอมเข้า') ||
-        text.includes('สุ่มปอก') || text.includes('ปอกได้') || text.includes('จำนวนที่ได้รับ') ||
-        text.includes('น้ำหนักสุทธิ') || text.includes('เก็บปลายทาง') || text.includes('ค่ารถ') ||
-        text.includes('ราคา') || (text.includes('กก.') && (text.includes('บ.') || text.includes('บาท')))
-    );
+function handleStockAndOpsIngest(chatId, text, lower, msg) {
 
-    if (isOpsOrStockPattern) {
         sendMessage(chatId, '🔄 [AI Unified Engine]: กำลังวิเคราะห์และอัปเดตระบบแบบครบวงจร...');
         sendChatAction(chatId, 'typing');
 
@@ -1972,10 +1964,11 @@ function handleCommand(chatId, text, msg = null) {
         req.write(postData);
         req.end();
         return;
-    }
 
-    // 3.0 Anti-Hallucination Ground-Truth Verification Command
-    if (lower === '/verify' || lower.startsWith('/verify ') || lower === '🔍 ตรวจสอบความถูกต้อง' || lower.startsWith('ตรวจข้อมูล')) {
+}
+
+function handleGroundTruthVerify(chatId, text, lower, msg) {
+
         const query = text.replace(/^(\/verify|ตรวจข้อมูล|🔍 ตรวจสอบความถูกต้อง)\s*/i, '').trim();
         const gtv = require('./ground_truth_validator.js');
         const records = query ? gtv.queryGroundTruth(query, query, query) : gtv.loadGroundTruth();
@@ -1994,10 +1987,11 @@ function handleCommand(chatId, text, msg = null) {
         }
         sendMessage(chatId, rep);
         return;
-    }
 
-    // 3.0.1 Automated Excel Integrity & Self-Reconciliation Audit Command
-    if (lower === '/audit' || lower === '/integrity' || lower === '🔍 ตรวจสอบความถูกต้องไฟล์' || lower === 'audit') {
+}
+
+function handleExcelIntegrityAudit(chatId, text, lower, msg) {
+
         const engine = require('./excel_integrity_engine.js');
         const targetFile = 'E:\\รวมงาน\\งาน 25-26\\TNS\\PO\\2026\\SEP Order PSC.xlsx';
         try {
@@ -2015,10 +2009,11 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, `❌ เกิดข้อผิดพลาดในการตรวจสอบ Integrity: ${e.message}`);
         }
         return;
-    }
 
-    // 3.0.2 Live Field Ops & Purchasing Status Command (/ops or /team)
-    if (lower === '/ops' || lower === '/team' || lower === '🚜 สถานะจัดซื้อ' || lower.includes('สถานะจัดซื้อ') || lower.includes('สถานะทีมงาน') || lower.includes('สวนไหนบ้าง') || lower.includes('รถของใคร')) {
+}
+
+function handleFieldOpsStatus(chatId, text, lower, msg) {
+
         const { loadTeamOps, WEBHOOK_PORT } = require('./webhook_server.js');
         const ops = loadTeamOps();
         let rep = `🚜 <b>[รายงานสถานะจัดซื้อ & ขนส่งภาคสนาม (Real-Time)]</b>\n`;
@@ -2042,12 +2037,11 @@ function handleCommand(chatId, text, msg = null) {
         rep += `🌐 <i>เว็บแอปทีมงานบันทึกงาน: http://localhost:${WEBHOOK_PORT}/ops</i>`;
         sendMessage(chatId, rep);
         return;
-    }
-
-        // 3.0.3 Real-Time AI Usage & Quota Command (/usage, /quota)
     
-    // Approach 2: Direct Command to update AI Quota from Telegram
-    if (lower.startsWith('/setquota') || lower.startsWith('/updatequota')) {
+}
+
+function handleSetAiQuota(chatId, text, lower, msg) {
+
         const parts = text.trim().split(/\s+/);
         // Usage: /setquota <weekly_pct> <five_hour_pct> [5h_refresh]
         // Example: /setquota 81.08 0 1h
@@ -2078,21 +2072,27 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, guide);
             return;
         }
-    }
 
-    if (lower === '/usage' || lower === '/quota' || lower === '⚡ ai quota' || lower === 'quota' || lower === 'usage' || lower === 'โควต้า') {
+}
+
+function handleAiQuotaUsage(chatId, text, lower, msg) {
+
         const usageText = quotaTracker.formatUsageForTelegram();
         sendMessageWithKeyboard(chatId, usageText, getDashboardInlineMarkup());
         return;
-    }
 
-    // 3.1 Memory & Continuous Learning Commands
-    if (lower === '/memory' || lower === '🧠 ความจำเลขา' || lower === 'ความจำ' || lower === 'จำอะไรได้บ้าง' || lower === '/knowledge') {
+}
+
+function handleMemoryQuery(chatId, text, lower, msg) {
+
         const memText = memoryEngine.formatMemoryForTelegram();
         sendMessageWithKeyboard(chatId, memText, getDashboardInlineMarkup());
         return;
-    }
-    if (lower.startsWith('จำว่า ') || lower.startsWith('จำไว้ว่า ') || lower.startsWith('ช่วยจำว่า ') || lower.startsWith('/remember ') || lower.startsWith('บันทึกว่า ')) {
+
+}
+
+function handleMemoryRemember(chatId, text, lower, msg) {
+
         const fact = text.replace(/^(จำว่า|จำไว้ว่า|ช่วยจำว่า|\/remember|บันทึกว่า)\s*/i, '').trim();
         if (fact.length > 0) {
             const isRule = fact.includes('ห้าม') || fact.includes('ต้อง') || fact.includes('ทุกวัน') || fact.includes('กำหนด');
@@ -2100,8 +2100,11 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, `🧠 [บันทึกเข้าความจำเลขาสำเร็จ!]\n\n• "${fact}"\n\nระบบได้อัปเดตไฟล์ความจำและ GEMINI.md พร้อมใช้งานในการตอบคำถามครั้งต่อไปทันทีครับ ✨`);
             return;
         }
-    }
-    if (lower.startsWith('/forget ') || lower.startsWith('ลืมว่า ') || lower.startsWith('ลบความจำ ')) {
+
+}
+
+function handleMemoryForget(chatId, text, lower, msg) {
+
         const query = text.replace(/^(\/forget|ลืมว่า|ลบความจำ)\s*/i, '').trim();
         const res = memoryEngine.forgetItem(query);
         if (res.ok) {
@@ -2110,12 +2113,11 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, `⚠️ ไม่พบรายการความจำที่ตรงกับ "${query}"\nพิมพ์ 🧠 ความจำเลขา เพื่อดูลำดับและรายการทั้งหมดครับ`);
         }
         return;
-    }
-
-    // 3.2 Fast Dashboard & Menu Shortcuts
     
-    // Reboot / Restart Command directly from Telegram
-    if (lower === '/reboot' || lower === '/restart' || lower === 'รีบูต' || lower === 'รีสตาร์ต' || lower === 'รีเซ็ตบอท') {
+}
+
+function handleSystemReboot(chatId, text, lower, msg) {
+
         sendMessage(chatId, '🔄 <b>[กำลังรีสตาร์ตระบบบอทเลขา...]</b>\n\nระบบกำลังตัดการทำงานและเริ่มใหม่อัตโนมัติใน 1 วินาทีค่ะ 🚀');
         setTimeout(() => {
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
@@ -2124,13 +2126,18 @@ function handleCommand(chatId, text, msg = null) {
             process.exit(0);
         }, 800);
         return;
-    }
 
-    if (lower === '/start' || lower === '/dashboard' || lower === 'dashboard' || lower === 'แดชบอร์ด') {
+}
+
+function handleSystemStart(chatId, text, lower, msg) {
+
         sendMessage(chatId, getDashboardSummary());
         return;
-    }
-    else if (lower === '/menu' || lower === 'เมนู' || lower === '/help' || lower === 'help') {
+
+}
+
+function handleHelpMenu(chatId, text, lower, msg) {
+
         const reply = `🤖 <b>[ระบบเลขา AI - รับคำสั่งข้อความโดยตรง 100%]</b>\n\n` +
                       `✨ <b>สามารถพิมพ์สอบถามหรือสั่งงานภาษาไทยได้ทันที:</b>\n` +
                       `• <i>"ขอสรุป order aft ล่าสุด"</i>\n` +
@@ -2149,8 +2156,11 @@ function handleCommand(chatId, text, msg = null) {
 • <code>/reboot</code> - รีสตาร์ตบอททันที (เมื่อบอทค้าง)`;
         sendMessage(chatId, reply);
         return;
-    }
-    else if (lower === '🎨 ai studio 300dpi' || lower === '/diffusion' || lower === '/studio' || lower === '300dpi') {
+
+}
+
+function handleAiStudio(chatId, text, lower, msg) {
+
         const reply = `🎨 [AI Diffusion 300 DPI Hand-Drawn Studio]\n\n` +
                       `✨ คลังภาพและ Master Prompts 500 ชุด 6 หมวดหมู่:\n` +
                       `  • 🌿 Botanical (85) | 🦊 Wildlife (85)\n` +
@@ -2161,8 +2171,11 @@ function handleCommand(chatId, text, msg = null) {
                       `⚡ สั่งรัน batch ได้ด้วย: /cmd powershell -File C:\\Users\\624\\ai_diffusion_500_handdrawn\\run_batch.ps1 -Limit 5`;
         sendMessageWithKeyboard(chatId, reply, getDashboardInlineMarkup());
         return;
-    }
-    else if (lower === '🥬 สต็อกผัก' || lower === '/stock' || lower === 'สต็อก' || lower === 'stock') {
+
+}
+
+function handleStockQuery(chatId, text, lower, msg) {
+
         const reply = `🥬 <b>[สถานะสต็อกคงเหลือจริง ณ 02/09/2569]</b>\n` +
                       `━━━━━━━━━━━━━━━━━━━━\n` +
                       `1. 🥬 <b>กะหล่ำปลี:</b> <b>2,575 kg</b>\n` +
@@ -2174,8 +2187,11 @@ function handleCommand(chatId, text, msg = null) {
                       ``;
         sendMessageWithKeyboard(chatId, reply, getDashboardInlineMarkup());
         return;
-    }
-    else if (lower === '/prep_gt' || lower === '📅 กำหนดส่ง gt') {
+
+}
+
+function handlePrepGroundTruth(chatId, text, lower, msg) {
+
         sendMessage(chatId, 'กำลังตรวจสอบและจัดทำ GT ล่วงหน้า 2 วัน (Multi-Customer)...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Auto-PrepareGT.ps1')}"`, (err, stdout) => {
             if (err) {
@@ -2185,8 +2201,11 @@ function handleCommand(chatId, text, msg = null) {
             }
         });
         return;
-    }
-    else if (lower === '/status' || lower === '💻 สถานะระบบ' || lower === 'สถานะ') {
+
+}
+
+function handleSystemStatus(chatId, text, lower, msg) {
+
         const inHours = isWithinWorkingHours();
         const scheduleStatus = inHours 
             ? '🟢 กำลังเฝ้าตรวจเช็กอัตโนมัติ (ช่วงเวลา 07:00 - 19:00)' 
@@ -2210,8 +2229,11 @@ function handleCommand(chatId, text, msg = null) {
                       `บันทึกล่าสุด:\n${logTail}`;
         sendMessage(chatId, reply);
         return;
-    }
-    else if (lower === '/po' || lower === '📦 สรุป po') {
+
+}
+
+function handlePoSummary(chatId, text, lower, msg) {
+
         const reply = `📦 <b>[สรุป PO ประจำเดือน ก.ย. 2569 (Ground Truth 100%)]</b>\n` +
                       `━━━━━━━━━━━━━━━━━━━━\n` +
                       `🏢 1. <b>AFT (Ajinomoto) - Rev.01</b>\n` +
@@ -2235,8 +2257,11 @@ function handleCommand(chatId, text, msg = null) {
                       `📱 <i>แตะปุ่มด้านล่างเพื่อเปิด PSC Mini App</i>`;
         sendMessage(chatId, reply);
         return;
-    }
-    else if (lower === '/latest' || lower === '📁 ไฟล์ล่าสุด') {
+
+}
+
+function handleLatestFile(chatId, text, lower, msg) {
+
         execSilent(`powershell -WindowStyle Hidden -Command "Get-ChildItem -Path 'E:\\รวมงาน\\งาน 25-26' -Include '*.pdf','*.xlsx' -Recurse | Where-Object { $_.Name -notlike 'COA*' -and $_.Name -notlike 'image*' -and $_.FullName -notlike '*\\.trashed*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Select-Object -ExpandProperty FullName"`, (err, stdout) => {
             const filePath = stdout ? stdout.trim() : '';
             if (filePath && fs.existsSync(filePath)) {
@@ -2248,12 +2273,18 @@ function handleCommand(chatId, text, msg = null) {
             }
         });
         return;
-    }
-    else if (lower.startsWith('/set_hotmail ') || lower.startsWith('/set_outlook ')) {
+
+}
+
+function handleSetHotmail(chatId, text, lower, msg) {
+
         sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่ารหัสผ่านอีเมลในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง ไม่อนุญาตให้ส่งผ่านแชท (Fix H-12)');
         return;
-    }
-    else if (lower === '/check_hotmail' || lower === '/hotmail') {
+
+}
+
+function handleCheckHotmail(chatId, text, lower, msg) {
+
         sendMessage(chatId, 'กำลังเชื่อมต่อและตรวจสอบ Hotmail / Outlook (outlook.office365.com:993)...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-HotmailPO.ps1')}"`, (err, stdout) => {
             if (err) {
@@ -2263,8 +2294,11 @@ function handleCommand(chatId, text, msg = null) {
             sendMessage(chatId, `✅ ตรวจสอบ Hotmail สำเร็จเรียบร้อย:\n${stdout || 'สแกนเสร็จสิ้น'}`);
         });
         return;
-    }
-    else if (lower === '/check' || lower === '🔄 เช็กเมล po' || lower === 'เช็กเมล') {
+
+}
+
+function handleCheckGmail(chatId, text, lower, msg) {
+
         sendMessage(chatId, 'กำลังตรวจสอบ Gmail...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-GmailPO.ps1')}" -AutoProcessGT`, (err, stdout) => {
             if (err) {
@@ -2290,8 +2324,11 @@ function handleCommand(chatId, text, msg = null) {
             }
         });
         return;
-    }
-    else if (lower === '/gt' || lower === 'อัปเดต gt') {
+
+}
+
+function handleUpdateGtSchedule(chatId, text, lower, msg) {
+
         sendMessage(chatId, 'กำลังอัปเดต GT Schedule...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(poBaseDir, 'Generate-GTSchedule.ps1')}"`, (err) => {
             if (err) {
@@ -2301,8 +2338,72 @@ function handleCommand(chatId, text, msg = null) {
             }
         });
         return;
+
+}
+
+const commandRegistry = [
+    { match: (lower, text) => lower === '/model' || lower.startsWith('/model '), handler: handleModelSwitching },
+    { match: (lower, text) => lower.startsWith('/set_glm_url ') || lower.startsWith('/glm_url '), handler: handleSetGlmUrl },
+    { match: (lower, text) => lower.startsWith('/set_glm_key ') || lower.startsWith('/glm_key '), handler: handleSetGlmKey },
+    { match: (lower, text) => lower.startsWith('/glm ') || lower.startsWith('/chatglm '), handler: handleGlmExplicit },
+    { match: (lower, text) => lower.startsWith('ขอไฟล์') || lower.startsWith('ส่งไฟล์') || lower.startsWith('/file') || lower.startsWith('download') || lower.includes('ขอไฟล์') || lower.includes('ส่งไฟล์'), handler: handleFileRequest },
+    { match: (lower, text) => lower.startsWith('/cmd ') || lower.startsWith('/sh ') || lower.startsWith('/ps '), handler: handleTerminalCommand },
+    { match: (lower, text) => lower === '/agy' || lower === '/ai', handler: handleAgyCliPrompt },
+    { match: (lower, text) => lower === '/miniapp' || lower === '/app' || lower === 'miniapp' || lower === '/dashboard', handler: handleMiniAppDashboard },
+    { match: (lower, text) => lower === '/agy-customizations' || lower === '/customization', handler: handleAgyCustomizations },
+    { match: (lower, text) => lower.startsWith('/agy ') || lower.startsWith('/ai '), handler: handleAgyExplicit },
+    { match: (lower, text) => {
+
+        const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
+        return !hasNegation && (
+            text.includes('สต็อก') || text.includes('สต๊อก') || text.toLowerCase().includes('stock') ||
+            text.includes('ขึ้นของ') || text.includes('รับเข้า') || text.includes('ขึ้นกะหล่ำ') ||
+            text.includes('ขึ้นหอม') || text.includes('กะหล่ำเข้า') || text.includes('หอมเข้า') ||
+            text.includes('สุ่มปอก') || text.includes('ปอกได้') || text.includes('จำนวนที่ได้รับ') ||
+            text.includes('น้ำหนักสุทธิ') || text.includes('เก็บปลายทาง') || text.includes('ค่ารถ') ||
+            text.includes('ราคา') || (text.includes('กก.') && (text.includes('บ.') || text.includes('บาท')))
+        );
+    }, handler: handleStockAndOpsIngest },
+    { match: (lower, text) => lower === '/verify' || lower.startsWith('/verify ') || lower === '🔍 ตรวจสอบความถูกต้อง' || lower.startsWith('ตรวจข้อมูล'), handler: handleGroundTruthVerify },
+    { match: (lower, text) => lower === '/audit' || lower === '/integrity' || lower === '🔍 ตรวจสอบความถูกต้องไฟล์' || lower === 'audit', handler: handleExcelIntegrityAudit },
+    { match: (lower, text) => lower === '/ops' || lower === '/team' || lower === '🚜 สถานะจัดซื้อ' || lower.includes('สถานะจัดซื้อ') || lower.includes('สถานะทีมงาน') || lower.includes('สวนไหนบ้าง') || lower.includes('รถของใคร'), handler: handleFieldOpsStatus },
+    { match: (lower, text) => lower.startsWith('/setquota') || lower.startsWith('/updatequota'), handler: handleSetAiQuota },
+    { match: (lower, text) => lower === '/usage' || lower === '/quota' || lower === '⚡ ai quota' || lower === 'quota' || lower === 'usage' || lower === 'โควต้า', handler: handleAiQuotaUsage },
+    { match: (lower, text) => lower === '/memory' || lower === '🧠 ความจำเลขา' || lower === 'ความจำ' || lower === 'จำอะไรได้บ้าง' || lower === '/knowledge', handler: handleMemoryQuery },
+    { match: (lower, text) => lower.startsWith('จำว่า ') || lower.startsWith('จำไว้ว่า ') || lower.startsWith('ช่วยจำว่า ') || lower.startsWith('/remember ') || lower.startsWith('บันทึกว่า '), handler: handleMemoryRemember },
+    { match: (lower, text) => lower.startsWith('/forget ') || lower.startsWith('ลืมว่า ') || lower.startsWith('ลบความจำ '), handler: handleMemoryForget },
+    { match: (lower, text) => lower === '/reboot' || lower === '/restart' || lower === 'รีบูต' || lower === 'รีสตาร์ต' || lower === 'รีเซ็ตบอท', handler: handleSystemReboot },
+    { match: (lower, text) => lower === '/start' || lower === '/dashboard' || lower === 'dashboard' || lower === 'แดชบอร์ด', handler: handleSystemStart },
+    { match: (lower, text) => lower === '/menu' || lower === 'เมนู' || lower === '/help' || lower === 'help', handler: handleHelpMenu },
+    { match: (lower, text) => lower === '🎨 ai studio 300dpi' || lower === '/diffusion' || lower === '/studio' || lower === '300dpi', handler: handleAiStudio },
+    { match: (lower, text) => lower === '🥬 สต็อกผัก' || lower === '/stock' || lower === 'สต็อก' || lower === 'stock', handler: handleStockQuery },
+    { match: (lower, text) => lower === '/prep_gt' || lower === '📅 กำหนดส่ง gt', handler: handlePrepGroundTruth },
+    { match: (lower, text) => lower === '/status' || lower === '💻 สถานะระบบ' || lower === 'สถานะ', handler: handleSystemStatus },
+    { match: (lower, text) => lower === '/po' || lower === '📦 สรุป po', handler: handlePoSummary },
+    { match: (lower, text) => lower === '/latest' || lower === '📁 ไฟล์ล่าสุด', handler: handleLatestFile },
+    { match: (lower, text) => lower.startsWith('/set_hotmail ') || lower.startsWith('/set_outlook '), handler: handleSetHotmail },
+    { match: (lower, text) => lower === '/check_hotmail' || lower === '/hotmail', handler: handleCheckHotmail },
+    { match: (lower, text) => lower === '/check' || lower === '🔄 เช็กเมล po' || lower === 'เช็กเมล', handler: handleCheckGmail },
+    { match: (lower, text) => lower === '/gt' || lower === 'อัปเดต gt', handler: handleUpdateGtSchedule },
+];
+
+function handleCommand(chatId, text, msg = null) {
+    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
+    if (!ALLOWED_ADMINS.includes(chatId.toString())) {
+        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
+        return;
     }
-    else {
+    const lower = text.toLowerCase();
+    const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
+
+
+    for (const cmd of commandRegistry) {
+        if (cmd.match(lower, text)) {
+            cmd.handler(chatId, text, lower, msg);
+            return;
+        }
+    }
+
         // 4. Default Direct Route -> OKMD Playground (Primary) / AGY / GLM
         if (currentAiEngine === 'okmd') {
             runOkmdEngine(chatId, text);
@@ -2311,8 +2412,9 @@ function handleCommand(chatId, text, msg = null) {
         } else {
             runAgyCli(chatId, text);
         }
-    }
+
 }
+
 
 // Start polling
 
