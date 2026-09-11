@@ -795,7 +795,7 @@ async function pollUpdates() {
                 writeLog(`[TG Message] From ${name} (${chatId}): ${text}`);
                 
                 // Fix C-01: Removed dynamic admin promotion
-                handleCommand(chatId, text, msg);
+                await handleCommand(chatId, text, msg);
             }
         }
     } catch (err) {
@@ -1380,7 +1380,7 @@ function runGlm(chatId, promptText) {
     }
 }
 
-function handleCommand(chatId, text, msg = null) {
+async function handleCommand(chatId, text, msg = null) {
     const ALLOWED_ADMINS = ['1532466397', config.ChatId];
     if (!ALLOWED_ADMINS.includes(chatId.toString())) {
         sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
@@ -1703,7 +1703,7 @@ function handleCommand(chatId, text, msg = null) {
         }, (res) => {
             let resData = '';
             res.on('data', chunk => resData += chunk);
-            res.on('end', () => {
+            res.on('end', async () => {
                 try {
                     let parsed = null;
                     let result = null;
@@ -1901,7 +1901,7 @@ function handleCommand(chatId, text, msg = null) {
                             rawText: text
                         };
 
-                        recordLoadingReport(reportObj);
+                        await recordLoadingReport(reportObj);
                     } else {
                         writeLog('[Ops Notice]: Pure stock inventory count detected; skipped shipment loading report overwrite.');
                     }
