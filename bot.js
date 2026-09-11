@@ -794,7 +794,6 @@ async function pollUpdates() {
                 
                 writeLog(`[TG Message] From ${name} (${chatId}): ${text}`);
                 
-                // Fix C-01: Removed dynamic admin promotion
                 handleCommand(chatId, text, msg);
             }
         }
