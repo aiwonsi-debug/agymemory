@@ -862,7 +862,7 @@ async function runOkmdEngine(chatId, promptText, customModel = null) {
             { role: 'user', content: fullContextPrompt }
         ],
         temperature: 0.6,
-        max_tokens: 1500
+        max_tokens: 300
     });
 
     try {
@@ -1007,7 +1007,7 @@ async function runGroqFallback(chatId, promptText, failReason = 'AGY CLI Quota R
             { role: 'user', content: promptText }
         ],
         temperature: 0.7,
-        max_tokens: 500
+        max_tokens: 300
     });
 
     try {
@@ -1331,6 +1331,7 @@ function runGlm(chatId, promptText) {
         model: glmConfig.Model || 'glm-5.3-flash',
         messages: [{ role: 'user', content: promptText }],
         temperature: glmConfig.Temperature || 0.7
+        , max_tokens: 300
     });
     
     try {
@@ -1686,7 +1687,8 @@ function handleCommand(chatId, text, msg = null) {
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: text }
-            ]
+            ],
+            max_tokens: 300
         });
 
         const urlObj = require('url').parse(GROQ_CONFIG.Url);
