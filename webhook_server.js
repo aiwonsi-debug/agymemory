@@ -5,6 +5,23 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 const fs = require('fs');
+
+// Atomic write helper (Fix C-06, H-14)
+function atomicWriteFileSync(filePath, data, encoding) {
+    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        if (encoding) {
+            fs.writeFileSync(tmpFile, data, encoding);
+        } else {
+            fs.writeFileSync(tmpFile, data);
+        }
+        fs.renameSync(tmpFile, filePath);
+    } catch (e) {
+        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
+        throw e;
+    }
+}
+
 const path = require('path');
 const quotaTracker = require('./ai_quota_tracker.js');
 
@@ -316,12 +333,9 @@ function recordLoadingReport(reportObj) {
 
 function saveTeamOps(data) {
     data.last_updated = new Date().toISOString();
-    const tmpFile = `${teamOpsFile}.${process.pid}.${Date.now()}.tmp`;
     try {
-        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
-        fs.renameSync(tmpFile, teamOpsFile);
+        atomicWriteFileSync(teamOpsFile, JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
-        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
         console.error('[saveTeamOps Error]:', e.message);
     }
 }
@@ -631,14 +645,11 @@ const server = http.createServer(async (req, res) => {
             }
 
             // Atomic file write using temporary file + renameSync to avoid corruption (Fix C-06, H-14)
-            const tmpFile = `${stockFile}.${process.pid}.${Date.now()}.tmp`;
             try {
-                fs.writeFileSync(tmpFile, JSON.stringify(body, null, 2), 'utf8');
-                fs.renameSync(tmpFile, stockFile);
+                atomicWriteFileSync(stockFile, JSON.stringify(body, null, 2), 'utf8');
                 res.writeHead(200);
                 return res.end(JSON.stringify({ success: true, message: 'Stock inventory updated atomically' }));
             } catch (err) {
-                try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (e) {}
                 res.writeHead(500);
                 return res.end(JSON.stringify({ success: false, error: 'Failed to commit stock update: ' + err.message }));
             }
@@ -695,7 +706,7 @@ const server = http.createServer(async (req, res) => {
             }
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
             try {
-                fs.writeFileSync(rebootSigFile, new Date().toISOString(), 'utf8');
+                atomicWriteFileSync(rebootSigFile, new Date().toISOString(), 'utf8');
                 console.log('[Bot Reboot Requested from Team Dashboard] Reboot signal written.');
                 res.writeHead(200);
                 return res.end(JSON.stringify({ 
