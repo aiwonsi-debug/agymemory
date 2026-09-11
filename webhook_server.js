@@ -31,6 +31,7 @@ function resolveOpsHtmlPath() {
     return candidates[0];
 }
 const mobileHtmlFile = resolveOpsHtmlPath();
+let cachedMobileHtml = null;
 const aiHtmlFile = path.join(__dirname, 'ai_dashboard.html');
 const teamOpsFile = path.join(__dirname, 'team_ops_status.json');
 const stockFile = path.join(__dirname, 'stock_inventory.json');
@@ -502,9 +503,13 @@ const server = http.createServer(async (req, res) => {
                 const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${isHttps ? '; Secure' : ''}`;
                 res.setHeader('Set-Cookie', cookieFlags);
                 res.writeHead(200);
-                const htmlContent = fs.readFileSync(mobileHtmlFile, 'utf8')
-                    .replace(/__PSC_API_KEY_PLACEHOLDER__/g, '');
-                return res.end(htmlContent);
+
+                if (!cachedMobileHtml) {
+                    const rawHtml = await fs.promises.readFile(mobileHtmlFile, 'utf8');
+                    cachedMobileHtml = rawHtml.replace(/__PSC_API_KEY_PLACEHOLDER__/g, '');
+                }
+
+                return res.end(cachedMobileHtml);
             } else {
                 res.setHeader('Content-Type', 'text/html; charset=utf-8');
                 res.writeHead(200);
