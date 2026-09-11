@@ -554,7 +554,9 @@ const server = http.createServer(async (req, res) => {
             isSessionAuth = isValidWebSession(cookieSession) || isValidWebSession(bearerToken) || isValidWebSession(headerSession);
 
             const isAuthorized = PSC_API_KEY && (isMasterAuth || isSessionAuth);
-            if (!isAuthorized) {
+            const isPublicWebhook = (pathname === '/api/gmail-webhook' || pathname === '/api/gmail-push');
+
+            if (!isAuthorized && !isPublicWebhook) {
                 res.writeHead(401);
                 return res.end(JSON.stringify({ 
                     success: false, 
