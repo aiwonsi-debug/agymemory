@@ -181,7 +181,7 @@ function sendMessage(chatId, text) {
     if (!text) return Promise.resolve();
     // Clean raw HTML tags so they never show up literally as <b> or <i>
     text = text.replace(/<\/?(b|i|strong|em|u|code|pre)[^>]*>/gi, '');
-    writeLog(`[Sending TG to ${chatId}]: ${text.substring(0, 60).replace(/\n/g, ' ')}...`);
+    writeLog(`[Sending TG to ${chatId}]: ${text.slice(0, 60).replace(/\n/g, ' ')}...`);
     if (text.length > 3900) {
         const chunks = text.match(/[\s\S]{1,3800}/g) || [text];
         let p = Promise.resolve();
@@ -200,7 +200,7 @@ function sendMessage(chatId, text) {
 
 function sendMessageWithKeyboard(chatId, text, replyMarkup) {
     if (!text) return Promise.resolve();
-    writeLog(`[Sending TG to ${chatId}]: ${text.substring(0, 60).replace(/\n/g, ' ')}...`);
+    writeLog(`[Sending TG to ${chatId}]: ${text.slice(0, 60).replace(/\n/g, ' ')}...`);
     return tgRequest('sendMessage', {
         chat_id: chatId,
         text: text,
@@ -257,7 +257,7 @@ function sendDocument(chatId, filePath, caption = '') {
             const fileName = path.basename(filePath);
             const fileBytes = fs.readFileSync(filePath);
             const mimeType = getMimeType(filePath);
-            const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+            const boundary = '----WebKitFormBoundary' + Math.random().toString(36).slice(2);
             
             let header = `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`;
             if (caption) {
@@ -310,7 +310,7 @@ function sendPhoto(chatId, filePath, caption = '') {
             if (!fs.existsSync(filePath)) return resolve(null);
             const fileName = path.basename(filePath);
             const fileBytes = fs.readFileSync(filePath);
-            const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+            const boundary = '----WebKitFormBoundary' + Math.random().toString(36).slice(2);
             
             let header = `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`;
             if (caption) {
@@ -1505,7 +1505,7 @@ function handleCommand(chatId, text, msg = null) {
 
     // Set GLM Base URL (for Local Open Weights or Cloud API)
     if (lower.startsWith('/set_glm_url ') || lower.startsWith('/glm_url ')) {
-        const url = text.substring(text.indexOf(' ') + 1).trim();
+        const url = text.slice(text.indexOf(' ') + 1).trim();
         const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
         let glmConfig = { Enabled: true, ApiKey: '', BaseUrl: url, Model: 'glm-5.3-flash' };
         if (fs.existsSync(glmCfgPath)) {
@@ -1525,7 +1525,7 @@ function handleCommand(chatId, text, msg = null) {
     
     // Explicit GLM command
     if (lower.startsWith('/glm ') || lower.startsWith('/chatglm ')) {
-        const prompt = text.substring(text.indexOf(' ') + 1).trim();
+        const prompt = text.slice(text.indexOf(' ') + 1).trim();
         runGlm(chatId, prompt);
         return;
     }
@@ -1628,7 +1628,7 @@ function handleCommand(chatId, text, msg = null) {
         return;
     }
     if (lower.startsWith('/agy ') || lower.startsWith('/ai ')) {
-        const prompt = text.substring(text.indexOf(' ') + 1).trim();
+        const prompt = text.slice(text.indexOf(' ') + 1).trim();
         runAgyCli(chatId, prompt);
         return;
     }

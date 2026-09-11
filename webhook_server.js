@@ -543,7 +543,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'POST') {
             const reqKey = (req.headers['x-psc-api-key'] || req.headers['x-api-key'] || '').trim();
             const authHeader = (req.headers['authorization'] || '').trim();
-            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.substring(7).trim() : '';
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
             const cookies = parseCookies(req);
             const cookieSession = cookies['psc_session'] || '';
 
@@ -583,7 +583,7 @@ const server = http.createServer(async (req, res) => {
             // Protect operational telemetry & AI quota metrics with API key
             const reqKey = (req.headers['x-psc-api-key'] || req.headers['x-api-key'] || '').trim();
             const authHeader = (req.headers['authorization'] || '').trim();
-            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.substring(7).trim() : '';
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
             const cookies = parseCookies(req);
             const cookieSession = cookies['psc_session'] || '';
 
@@ -722,7 +722,7 @@ const server = http.createServer(async (req, res) => {
             const safeFrom = escapeHtml(from);
             const safeSubject = escapeHtml(subject);
             const safeDate = escapeHtml(date);
-            const safeSnippet = escapeHtml(snippet ? snippet.substring(0, 300) : '');
+            const safeSnippet = escapeHtml(snippet ? snippet.slice(0, 300) : '');
             const safeAttNames = attNames.map(a => escapeHtml(a));
 
             let tgMsg = `📬 <b>[มีอีเมลใหม่เข้าถึงเลขาแบบ Real-time]</b> ✨\n` +
