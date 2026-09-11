@@ -1871,16 +1871,16 @@ function handleCommand(chatId, text, msg = null) {
                         let cardId = 'salaya_0309';
                         const rawTextLower = text.toLowerCase();
                         const dateStr = result.date || '';
-                        if (text.includes('หอมแดง')) {
-                            cardId = (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709';
-                        } else if (text.includes('พริก')) {
-                            cardId = 'tns_pepper_1609';
-                        } else if (dateStr.includes('07') || dateStr.includes('08')) {
-                            cardId = 'salaya_0809';
-                        } else if (dateStr.includes('01') || dateStr.includes('02')) {
-                            cardId = 'salaya_0209';
-                        } else if (dateStr.includes('03')) {
-                            cardId = 'salaya_0309';
+                        const cardRules = [
+                            { match: text.includes('หอมแดง'), id: (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709' },
+                            { match: text.includes('พริก'), id: 'tns_pepper_1609' },
+                            { match: dateStr.includes('07') || dateStr.includes('08'), id: 'salaya_0809' },
+                            { match: dateStr.includes('01') || dateStr.includes('02'), id: 'salaya_0209' },
+                            { match: dateStr.includes('03'), id: 'salaya_0309' }
+                        ];
+                        const matchedRule = cardRules.find(r => r.match);
+                        if (matchedRule) {
+                            cardId = matchedRule.id;
                         }
 
                         const weightFormatted = result.weight_kg ? (result.weight_kg.toLocaleString() + ' kg') : '';
