@@ -633,7 +633,13 @@ const server = http.createServer(async (req, res) => {
             // Atomic file write using temporary file + renameSync to avoid corruption (Fix C-06, H-14)
             const tmpFile = `${stockFile}.${process.pid}.${Date.now()}.tmp`;
             try {
-                fs.writeFileSync(tmpFile, JSON.stringify(body, null, 2), 'utf8');
+                const fd = fs.openSync(tmpFile, 'w');
+                try {
+                    fs.writeFileSync(fd, JSON.stringify(body, null, 2), 'utf8');
+                    fs.fsyncSync(fd);
+                } finally {
+                    fs.closeSync(fd);
+                }
                 fs.renameSync(tmpFile, stockFile);
                 res.writeHead(200);
                 return res.end(JSON.stringify({ success: true, message: 'Stock inventory updated atomically' }));
