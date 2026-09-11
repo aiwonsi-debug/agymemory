@@ -1543,7 +1543,6 @@ function handleCommand(chatId, text, msg = null) {
         }
         
         sendMessage(chatId, `🔍 กำลังค้นหาไฟล์ "${query || 'ที่ต้องการ'}" ในระบบ...`);
-        // Fix H-04: Confine file scanning to business docs folder only
         const searchRoots = ['E:\\รวมงาน\\งาน 25-26'];
         const foundFiles = [];
         
