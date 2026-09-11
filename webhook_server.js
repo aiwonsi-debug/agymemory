@@ -271,7 +271,7 @@ function loadTeamOps() {
 }
 
 
-function recordLoadingReport(reportObj) {
+async function recordLoadingReport(reportObj) {
     if (!reportObj) return;
     const opsData = loadTeamOps();
     if (!opsData.history_logs) opsData.history_logs = [];
@@ -305,7 +305,7 @@ function recordLoadingReport(reportObj) {
     });
 
     if (opsData.history_logs.length > 50) opsData.history_logs.pop();
-    saveTeamOps(opsData);
+    await saveTeamOps(opsData);
 
     // Auto sync to Render and Google Sheets
     syncToRender('/api/loading-report', reportObj);
@@ -314,14 +314,14 @@ function recordLoadingReport(reportObj) {
     }
 }
 
-function saveTeamOps(data) {
+async function saveTeamOps(data) {
     data.last_updated = new Date().toISOString();
     const tmpFile = `${teamOpsFile}.${process.pid}.${Date.now()}.tmp`;
     try {
-        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
-        fs.renameSync(tmpFile, teamOpsFile);
+        await fs.promises.writeFile(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+        await fs.promises.rename(tmpFile, teamOpsFile);
     } catch (e) {
-        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
+        try { if (fs.existsSync(tmpFile)) await fs.promises.unlink(tmpFile); } catch (err) {}
         console.error('[saveTeamOps Error]:', e.message);
     }
 }
@@ -779,7 +779,7 @@ const server = http.createServer(async (req, res) => {
         // Loading Report POST (From Bot or Web)
         if (req.method === 'POST' && pathname === '/api/loading-report') {
             const body = await getBody();
-            recordLoadingReport(body);
+            await recordLoadingReport(body);
             res.writeHead(200);
             return res.end(JSON.stringify({ success: true, message: 'Loading report saved and synced' }));
         }
@@ -846,7 +846,7 @@ const server = http.createServer(async (req, res) => {
                 opsData.active_operations.push(newOp);
             }
 
-            saveTeamOps(opsData);
+            await saveTeamOps(opsData);
 
             res.writeHead(200);
             return res.end(JSON.stringify({
@@ -863,7 +863,7 @@ const server = http.createServer(async (req, res) => {
             const opsData = loadTeamOps();
             if (opsData.cards_state && opsData.cards_state[id]) {
                 opsData.cards_state[id].loadedReported = false;
-                saveTeamOps(opsData);
+                await saveTeamOps(opsData);
                 syncToGoogleSheets(opsData.cards_state[id]);
                 syncToRender('/api/team-reset', { id: id });
             }
