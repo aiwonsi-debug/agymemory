@@ -162,7 +162,7 @@ function recordGroqUsage(usage = {}, headers = null, model = 'qwen/qwen3.8-27b',
     engine: 'Groq',
     model: model,
     tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    snippet: (promptSnippet || '').slice(0, 50)
   });
 
   if (data.recent_events.length > 20) data.recent_events.pop();
@@ -196,7 +196,7 @@ function recordAgyUsage(promptText = '') {
     engine: 'AGY CLI',
     model: 'Antigravity Direct',
     tokens: null,
-    snippet: (promptText || '').substring(0, 50)
+    snippet: (promptText || '').slice(0, 50)
   });
 
   if (data.recent_events.length > 20) data.recent_events.pop();
@@ -223,7 +223,7 @@ function recordGlmUsage(usage = {}, promptSnippet = '') {
     engine: 'GLM',
     model: data.glm.model || 'glm-4-plus',
     tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    snippet: (promptSnippet || '').slice(0, 50)
   });
 
   if (data.recent_events.length > 20) data.recent_events.pop();
@@ -269,7 +269,7 @@ function recordOkmdUsage(usage = {}, modelQuota = {}, model = 'deepseek-v4-pro',
     engine: 'OKMD',
     model: model,
     tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    snippet: (promptSnippet || '').slice(0, 50)
   });
 
   if (data.recent_events.length > 20) data.recent_events.pop();
