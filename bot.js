@@ -823,9 +823,6 @@ function getOkmdApiKey() {
             try { key = fs.readFileSync(keyFile, 'utf8').trim(); } catch(e){}
         }
     }
-    if (!key) {
-        key = 'sk_MismwQxtgd7y6eif01zEH5ayVAKfx7zTpCmFUnJE0R91FEwKppA93unYLYV7uk7T';
-    }
     return key;
 }
 
