@@ -537,187 +537,239 @@ function handleCallbackQuery(cq) {
         ]
     };
 
-    if (data === 'dash_refresh' || data === 'dash_back') {
-        answerCallbackQuery(cqId, '🔄 แดชบอร์ดอัปเดตข้อมูลล่าสุดเรียบร้อย');
-        editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
-    }
-    else if (data === 'dash_quota_usage') {
-        answerCallbackQuery(cqId, '⚡ Real-Time AI Quota & Usage');
-        const reply = quotaTracker.formatUsageForTelegram();
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_sync_gmail') {
-        answerCallbackQuery(cqId, '⏳ กำลังตรวจสอบ Gmail ในพื้นหลัง...');
-        execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-GmailPO.ps1')}" -AutoProcessGT`, (err, stdout) => {
-            if (err) {
-                editMessageText(chatId, messageId, `❌ [Gmail Sync Error]: ${err.message}\n\nกดปุ่มเพื่อกลับไปหน้าหลัก`, backMarkup);
-            } else {
-                const out = stdout || '';
-                const matches = out.match(/\[SAVED\]\s*([^\r\n]+)/g);
-                let textResult = `📬 [ผลการตรวจเช็ก Gmail ล่าสุด]\n\n`;
-                if (matches && matches.length > 0) {
-                    textResult += `🎉 ตรวจพบ ${matches.length} ไฟล์ใหม่:\n`;
-                    matches.slice(0, 8).forEach(m => {
-                        const cleanM = m.replace('[SAVED]', '').trim();
-                        textResult += `• ${cleanM}\n`;
-                        try {
-                            const detail = formatPoDetailsForNotification(cleanM);
-                            if (detail) textResult += detail + '\n';
-                        } catch(e) {}
-                    });
-                    textResult += `อัปเดตไฟล์ Excel, GT Schedule และ Dashboard บนเว็บเรียบร้อยแล้ว`;
-                }
-                editMessageText(chatId, messageId, textResult, backMarkup);
-            }
-        });
-    }
-    else if (data === 'dash_gt_schedule') {
-        answerCallbackQuery(cqId, '📅 กำหนดการส่งมอบ GT');
-        const reply = `📅 [ตารางส่งมอบ & เตือน GT (D-2)]\n` +
-                      `──────────────────\n` +
-                      `🏢 1. Siam Yamamori (Sep 26)\n` +
-                      `  • ส่ง 05/09 ➔ เตือน GT 03/09 (PO2357)\n` +
-                      `  • ส่ง 10/09 ➔ เตือน GT 08/09 (PO2358)\n` +
-                      `  • ส่ง 14/09 ➔ เตือน GT 12/09 (PO2424)\n` +
-                      `  • ส่ง 16/09 ➔ เตือน GT 14/09 (PO2425)\n\n` +
-                      `🏢 2. AFT (Ajinomoto Sep 26 Rev.00)\n` +
-                      `  • ส่ง 01/09 (อ.) ➔ เตือน 31/08 12:00 น.\n` +
-                      `  • ส่ง 03/09 (พฤ.) ➔ เตือน 02/09 12:00 น.\n` +
-                      `  • ส่ง 05/09 (ส.) ➔ เตือน 04/09 12:00 น.\n` +
-                      `  • ส่ง 07/09 (จ.) ➔ ⚠️ เลื่อนเตือนเป็น 05/09\n` +
-                      `  • ส่ง 08/09 (อ.) ➔ เตือน 07/09 12:00 น.\n` +
-                      `  • ส่ง 10/09 (พฤ.) ➔ เตือน 09/09 12:00 น.\n\n` +
-                      `🏢 3. TNS (Thai Nisshin Sep 26)\n` +
-                      `  • ส่งรอบวันที่ 1, 2, 3, 4, 5, 7, 8...\n` +
-                      `──────────────────\n` +
-                      `🔔 แจ้งเตือนอัตโนมัติล่วงหน้าตามรอบ`;
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_po_summary') {
-        answerCallbackQuery(cqId, '📦 สรุป PO 3 โรงงาน (Rev.01)');
-        const reply = `📦 <b>[สรุป PO ประจำเดือน ก.ย. 2569 (Ground Truth 100%)]</b>\n` +
-                      `━━━━━━━━━━━━━━━━━━━━\n` +
-                      `🏢 1. <b>AFT (Ajinomoto) - Rev.01</b>\n` +
-                      `  • กะหล่ำปลี: 51,900 kg (เช้า 45.9t / บ่าย 6t)\n` +
-                      `  • หอมใหญ่ปอก: 21,300 kg (เช้า 19.2t / บ่าย 2.1t)\n` +
-                      `  • แครอท: 2,634 kg (รวม Sample RD 4 kg)\n` +
-                      `  ➔ <b>รวม AFT: 75,834 kg (20 วัน)</b>\n\n` +
-                      `🏢 2. <b>TNS (Thai Nisshin)</b>\n` +
-                      `  • แครอท: 15,600 kg | กะหล่ำปลี: 12,700 kg\n` +
-                      `  • พริกหวานเขียว: 2,000 kg (16 ก.ย.) | ขิง: 1,630 kg\n` +
-                      `  • หอมแดง: 1,000 kg (7 & 21 ก.ย.) | ต้นหอม: 750 kg\n` +
-                      `  ➔ <b>รวม TNS: 33,680 kg (24 วัน)</b>\n\n` +
-                      `🏢 3. <b>Siam Yamamori</b>\n` +
-                      `  • PO2357 (05/09): แครอท 180kg, หอมใหญ่ 625kg\n` +
-                      `  • PO2358 (10/09) [Rev]: แครอท 136kg, หอมใหญ่ 1,300kg\n` +
-                      `  • PO2424 (14/09): แครอท 136kg, หอมใหญ่ 605kg\n` +
-                      `  • PO2425 (16/09): หอมใหญ่ 920kg\n` +
-                      `  ➔ <b>รวม Yamamori: 3,902 kg (132,336 บ.)</b>\n` +
-                      `━━━━━━━━━━━━━━━━━━━━\n` +
-                      `🌟 <b>ยอดรวมทั้ง 3 โรงงาน: 113,416 kg</b>` +
-                      ``;
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_stock_status') {
-        answerCallbackQuery(cqId, '🥬 สต็อก 02/09/69 (ตรวจนับจริง)');
-        let reply = `🥬 <b>[สถานะสต็อกคงเหลือจริง ณ 02/09/2569]</b>\n` +
-                    `━━━━━━━━━━━━━━━━━━━━\n` +
-                    `1. 🥬 <b>กะหล่ำปลี:</b> <b>2,575 kg</b>\n` +
-                    `   • คาดการณ์ใช้ได้ถึง: ~15/09/69 (มีรอบเติม 8 ตันต่อเนื่อง 02/09, 03/09, 08/09)\n` +
-                    `   • Actual Yield ล่าสุด: 60.4% (AFT Unsize)\n\n` +
-                    `2. 🧅 <b>หอมหัวใหญ่:</b> <b>29,680 kg</b>\n` +
-                    `   • หอม AFT: 26,120 kg (พอถึง 30/09/69)\n` +
-                    `   • หอมจีน: 3,560 kg (พอถึง 30/09/69)\n\n` +
-                    `3. 🥕 <b>แครอทสวย:</b> <b>5,840 kg</b>\n` +
-                    `   • คาดการณ์ใช้ได้ถึง: ~10/09/69 (สต็อกเข้าเติมแล้ว ปลอดภัย)\n\n` +
-                    `4. 🍠 <b>พืชหัวและมันหวาน:</b>\n` +
-                    `   • มันม่วงหัวเล็ก: 1,690 kg\n` +
-                    `   • มันเหลืองไข่: 342 kg\n` +
-                    `   • มันส้ม: 390 kg (พอตลอดเดือน)\n` +
-                    `━━━━━━━━━━━━━━━━━━━━\n` +
-                    `📱 <i>เปิดดูสต็อกสด & คาดการณ์รันเวย์ได้ใน PSC Mini App</i>`;
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_ai_diffusion') {
-        answerCallbackQuery(cqId, '🎨 AI Diffusion 300 DPI Studio');
-        const reply = `🎨 [AI Diffusion 300 DPI Hand-Drawn Studio]\n\n` +
-                      `✨ คลังภาพและชุดคำสั่งระดับ Master Prompt 500 ชุด:\n` +
-                      `  • 🌿 Botanical & Florals: 85 Prompts\n` +
-                      `  • 🦊 Animals & Wildlife: 85 Prompts\n` +
-                      `  • 🏛️ Architecture & Cozy Places: 85 Prompts\n` +
-                      `  • ☕ Whimsical Doodles & Hygge: 80 Prompts\n` +
-                      `  • 🐉 Fantasy & Mythical: 85 Prompts\n` +
-                      `  • 🍞 Still Life, Food & Objects: 80 Prompts\n\n` +
-                      `🖨️ สเปกการพิมพ์: มาตรฐาน 300 DPI (8x10", 12x12", 18x24", 24x36", A4)\n` +
-                      `📁 โฟลเดอร์โปรเจกต์: C:\\Users\\624\\ai_diffusion_500_handdrawn\n` +
-                      `⚡ สั่งรันชุดทดสอบผ่านบอทได้ด้วย: /cmd powershell -File C:\\Users\\624\\ai_diffusion_500_handdrawn\\run_batch.ps1 -Limit 5`;
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_toggle_engine') {
-        currentAiEngine = (currentAiEngine === 'agy') ? 'glm' : 'agy';
-        config.DefaultEngine = currentAiEngine;
-        try { fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
-        
-        answerCallbackQuery(cqId, `✅ สลับ AI Engine เป็น ${currentAiEngine.toUpperCase()} เรียบร้อยแล้ว!`, true);
-        editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
-    }
-    else if (data === 'dash_system_health') {
-        answerCallbackQuery(cqId, '💻 สเปกระบบ & PM2');
-        const mem = process.memoryUsage();
-        const rssMb = (mem.rss / 1024 / 1024).toFixed(1);
-        const heapMb = (mem.heapUsed / 1024 / 1024).toFixed(1);
-        const uptimeMin = (process.uptime() / 60).toFixed(1);
-        
-        const reply = `💻 [สถานะระบบ & PM2 Service Monitor]\n\n` +
-                      `• Host Platform: Windows 10/11 x64\n` +
-                      `• Node.js: v20.17.0\n` +
-                      `• บอท Uptime: ${uptimeMin} นาที\n` +
-                      `• Memory Usage: RSS ${rssMb} MB | Heap ${heapMb} MB\n` +
-                      `• PM2 Services: telegram-bot (Active) | ssh-server (Active)\n` +
-                      `• โฟลเดอร์ปฏิบัติการ: E:\\agy\n` +
-                      `• พื้นที่จัดเก็บเอกสาร: E:\\รวมงาน\\งาน 25-26\n` +
-                      `• Background Windows Mode: 100% Silent (Hidden)`;
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_memory') {
-        answerCallbackQuery(cqId, '🧠 ความจำ & การเรียนรู้ของเลขา');
-        const reply = memoryEngine.formatMemoryForTelegram();
-        editMessageText(chatId, messageId, reply, backMarkup);
-    }
-    else if (data === 'dash_get_latest_file') {
-        answerCallbackQuery(cqId, '📁 กำลังค้นหาไฟล์ล่าสุด...');
-        execSilent(`powershell -WindowStyle Hidden -Command "Get-ChildItem -Path 'E:\\รวมงาน\\งาน 25-26' -Include '*.pdf','*.xlsx' -Recurse | Where-Object { $_.Name -notlike 'COA*' -and $_.Name -notlike 'image*' -and $_.FullName -notlike '*\\.trashed*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Select-Object -ExpandProperty FullName"`, (err, stdout) => {
-            const filePath = stdout ? stdout.trim() : '';
-            if (filePath && fs.existsSync(filePath)) {
-                const fileName = path.basename(filePath);
-                sendMessage(chatId, `📁 ไฟล์ Order/PO ล่าสุด: ${fileName}`);
-                sendDocument(chatId, filePath, fileName);
-            } else {
-                sendMessage(chatId, 'ไม่พบไฟล์ Order/PO ในระบบ');
-            }
-        });
-    }
-    else if (data === 'dash_help_menu') {
-        answerCallbackQuery(cqId, '❓ เมนูคำสั่ง');
-        const reply = `❓ [คู่มือการใช้งานระบบเลขา AI]\n\n` +
-                      `📌 1. ปุ่มลัด & แดชบอร์ด:\n` +
-                      `• กดปุ่ม "📊 แดชบอร์ด" เพื่อดูภาพรวมทั้งหมด\n` +
-                      `• กดปุ่ม "🔄 เช็กเมล PO" เพื่อดึงไฟล์เข้า Gmail ทันที\n` +
-                      `• กดปุ่ม "📅 กำหนดส่ง GT" เพื่อดูรอบเตือน D-2\n\n` +
-                      `📌 2. พิมพ์ถามอิสระ (รองรับภาษาไทยธรรมชาติ):\n` +
-                      `• "ขอ order aft sep"\n` +
-                      `• "คำนวณสต็อกกะหล่ำปลีหน่อย"\n` +
-                      `• "รอบส่ง yamamori มีวันไหนบ้าง"\n` +
-                      `• "ขอไฟล์ PO ล่าสุด"\n\n` +
-                      `📌 3. คำสั่งพิเศษ:\n` +
-                      `• /agy <คำสั่ง> - เรียกใช้ Google Antigravity CLI\n` +
-                      `• /glm <คำสั่ง> - เรียกใช้ GLM AI\n` +
-                      `• /cmd <คำสั่ง> - รัน PowerShell ในเครื่อง`;
-        editMessageText(chatId, messageId, reply, backMarkup);
+    switch (data) {
+        case 'dash_refresh':
+        case 'dash_back':
+            handleDashRefreshOrBack(chatId, messageId, cqId);
+            break;
+        case 'dash_quota_usage':
+            handleDashQuotaUsage(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_sync_gmail':
+            handleDashSyncGmail(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_gt_schedule':
+            handleDashGtSchedule(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_po_summary':
+            handleDashPoSummary(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_stock_status':
+            handleDashStockStatus(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_ai_diffusion':
+            handleDashAiDiffusion(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_toggle_engine':
+            handleDashToggleEngine(chatId, messageId, cqId);
+            break;
+        case 'dash_system_health':
+            handleDashSystemHealth(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_memory':
+            handleDashMemory(chatId, messageId, cqId, backMarkup);
+            break;
+        case 'dash_get_latest_file':
+            handleDashGetLatestFile(chatId, cqId);
+            break;
+        case 'dash_help_menu':
+            handleDashHelpMenu(chatId, messageId, cqId, backMarkup);
+            break;
     }
 }
 
+function handleDashRefreshOrBack(chatId, messageId, cqId) {
+    answerCallbackQuery(cqId, '🔄 แดชบอร์ดอัปเดตข้อมูลล่าสุดเรียบร้อย');
+    editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
+}
+
+function handleDashQuotaUsage(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '⚡ Real-Time AI Quota & Usage');
+    const reply = quotaTracker.formatUsageForTelegram();
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashSyncGmail(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '⏳ กำลังตรวจสอบ Gmail ในพื้นหลัง...');
+    execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-GmailPO.ps1')}" -AutoProcessGT`, (err, stdout) => {
+        if (err) {
+            editMessageText(chatId, messageId, `❌ [Gmail Sync Error]: ${err.message}\n\nกดปุ่มเพื่อกลับไปหน้าหลัก`, backMarkup);
+        } else {
+            const out = stdout || '';
+            const matches = out.match(/\[SAVED\]\s*([^\r\n]+)/g);
+            let textResult = `📬 [ผลการตรวจเช็ก Gmail ล่าสุด]\n\n`;
+            if (matches && matches.length > 0) {
+                textResult += `🎉 ตรวจพบ ${matches.length} ไฟล์ใหม่:\n`;
+                matches.slice(0, 8).forEach(m => {
+                    const cleanM = m.replace('[SAVED]', '').trim();
+                    textResult += `• ${cleanM}\n`;
+                    try {
+                        const detail = formatPoDetailsForNotification(cleanM);
+                        if (detail) textResult += detail + '\n';
+                    } catch(e) {}
+                });
+                textResult += `อัปเดตไฟล์ Excel, GT Schedule และ Dashboard บนเว็บเรียบร้อยแล้ว`;
+            }
+            editMessageText(chatId, messageId, textResult, backMarkup);
+        }
+    });
+}
+
+function handleDashGtSchedule(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '📅 กำหนดการส่งมอบ GT');
+    const reply = `📅 [ตารางส่งมอบ & เตือน GT (D-2)]\n` +
+                  `──────────────────\n` +
+                  `🏢 1. Siam Yamamori (Sep 26)\n` +
+                  `  • ส่ง 05/09 ➔ เตือน GT 03/09 (PO2357)\n` +
+                  `  • ส่ง 10/09 ➔ เตือน GT 08/09 (PO2358)\n` +
+                  `  • ส่ง 14/09 ➔ เตือน GT 12/09 (PO2424)\n` +
+                  `  • ส่ง 16/09 ➔ เตือน GT 14/09 (PO2425)\n\n` +
+                  `🏢 2. AFT (Ajinomoto Sep 26 Rev.00)\n` +
+                  `  • ส่ง 01/09 (อ.) ➔ เตือน 31/08 12:00 น.\n` +
+                  `  • ส่ง 03/09 (พฤ.) ➔ เตือน 02/09 12:00 น.\n` +
+                  `  • ส่ง 05/09 (ส.) ➔ เตือน 04/09 12:00 น.\n` +
+                  `  • ส่ง 07/09 (จ.) ➔ ⚠️ เลื่อนเตือนเป็น 05/09\n` +
+                  `  • ส่ง 08/09 (อ.) ➔ เตือน 07/09 12:00 น.\n` +
+                  `  • ส่ง 10/09 (พฤ.) ➔ เตือน 09/09 12:00 น.\n\n` +
+                  `🏢 3. TNS (Thai Nisshin Sep 26)\n` +
+                  `  • ส่งรอบวันที่ 1, 2, 3, 4, 5, 7, 8...\n` +
+                  `──────────────────\n` +
+                  `🔔 แจ้งเตือนอัตโนมัติล่วงหน้าตามรอบ`;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashPoSummary(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '📦 สรุป PO 3 โรงงาน (Rev.01)');
+    const reply = `📦 <b>[สรุป PO ประจำเดือน ก.ย. 2569 (Ground Truth 100%)]</b>\n` +
+                  `━━━━━━━━━━━━━━━━━━━━\n` +
+                  `🏢 1. <b>AFT (Ajinomoto) - Rev.01</b>\n` +
+                  `  • กะหล่ำปลี: 51,900 kg (เช้า 45.9t / บ่าย 6t)\n` +
+                  `  • หอมใหญ่ปอก: 21,300 kg (เช้า 19.2t / บ่าย 2.1t)\n` +
+                  `  • แครอท: 2,634 kg (รวม Sample RD 4 kg)\n` +
+                  `  ➔ <b>รวม AFT: 75,834 kg (20 วัน)</b>\n\n` +
+                  `🏢 2. <b>TNS (Thai Nisshin)</b>\n` +
+                  `  • แครอท: 15,600 kg | กะหล่ำปลี: 12,700 kg\n` +
+                  `  • พริกหวานเขียว: 2,000 kg (16 ก.ย.) | ขิง: 1,630 kg\n` +
+                  `  • หอมแดง: 1,000 kg (7 & 21 ก.ย.) | ต้นหอม: 750 kg\n` +
+                  `  ➔ <b>รวม TNS: 33,680 kg (24 วัน)</b>\n\n` +
+                  `🏢 3. <b>Siam Yamamori</b>\n` +
+                  `  • PO2357 (05/09): แครอท 180kg, หอมใหญ่ 625kg\n` +
+                  `  • PO2358 (10/09) [Rev]: แครอท 136kg, หอมใหญ่ 1,300kg\n` +
+                  `  • PO2424 (14/09): แครอท 136kg, หอมใหญ่ 605kg\n` +
+                  `  • PO2425 (16/09): หอมใหญ่ 920kg\n` +
+                  `  ➔ <b>รวม Yamamori: 3,902 kg (132,336 บ.)</b>\n` +
+                  `━━━━━━━━━━━━━━━━━━━━\n` +
+                  `🌟 <b>ยอดรวมทั้ง 3 โรงงาน: 113,416 kg</b>` +
+                  ``;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashStockStatus(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '🥬 สต็อก 02/09/69 (ตรวจนับจริง)');
+    let reply = `🥬 <b>[สถานะสต็อกคงเหลือจริง ณ 02/09/2569]</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `1. 🥬 <b>กะหล่ำปลี:</b> <b>2,575 kg</b>\n` +
+                `   • คาดการณ์ใช้ได้ถึง: ~15/09/69 (มีรอบเติม 8 ตันต่อเนื่อง 02/09, 03/09, 08/09)\n` +
+                `   • Actual Yield ล่าสุด: 60.4% (AFT Unsize)\n\n` +
+                `2. 🧅 <b>หอมหัวใหญ่:</b> <b>29,680 kg</b>\n` +
+                `   • หอม AFT: 26,120 kg (พอถึง 30/09/69)\n` +
+                `   • หอมจีน: 3,560 kg (พอถึง 30/09/69)\n\n` +
+                `3. 🥕 <b>แครอทสวย:</b> <b>5,840 kg</b>\n` +
+                `   • คาดการณ์ใช้ได้ถึง: ~10/09/69 (สต็อกเข้าเติมแล้ว ปลอดภัย)\n\n` +
+                `4. 🍠 <b>พืชหัวและมันหวาน:</b>\n` +
+                `   • มันม่วงหัวเล็ก: 1,690 kg\n` +
+                `   • มันเหลืองไข่: 342 kg\n` +
+                `   • มันส้ม: 390 kg (พอตลอดเดือน)\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
+                `📱 <i>เปิดดูสต็อกสด & คาดการณ์รันเวย์ได้ใน PSC Mini App</i>`;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashAiDiffusion(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '🎨 AI Diffusion 300 DPI Studio');
+    const reply = `🎨 [AI Diffusion 300 DPI Hand-Drawn Studio]\n\n` +
+                  `✨ คลังภาพและชุดคำสั่งระดับ Master Prompt 500 ชุด:\n` +
+                  `  • 🌿 Botanical & Florals: 85 Prompts\n` +
+                  `  • 🦊 Animals & Wildlife: 85 Prompts\n` +
+                  `  • 🏛️ Architecture & Cozy Places: 85 Prompts\n` +
+                  `  • ☕ Whimsical Doodles & Hygge: 80 Prompts\n` +
+                  `  • 🐉 Fantasy & Mythical: 85 Prompts\n` +
+                  `  • 🍞 Still Life, Food & Objects: 80 Prompts\n\n` +
+                  `🖨️ สเปกการพิมพ์: มาตรฐาน 300 DPI (8x10", 12x12", 18x24", 24x36", A4)\n` +
+                  `📁 โฟลเดอร์โปรเจกต์: C:\\Users\\624\\ai_diffusion_500_handdrawn\n` +
+                  `⚡ สั่งรันชุดทดสอบผ่านบอทได้ด้วย: /cmd powershell -File C:\\Users\\624\\ai_diffusion_500_handdrawn\\run_batch.ps1 -Limit 5`;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashToggleEngine(chatId, messageId, cqId) {
+    currentAiEngine = (currentAiEngine === 'agy') ? 'glm' : 'agy';
+    config.DefaultEngine = currentAiEngine;
+    try { fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
+
+    answerCallbackQuery(cqId, `✅ สลับ AI Engine เป็น ${currentAiEngine.toUpperCase()} เรียบร้อยแล้ว!`, true);
+    editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
+}
+
+function handleDashSystemHealth(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '💻 สเปกระบบ & PM2');
+    const mem = process.memoryUsage();
+    const rssMb = (mem.rss / 1024 / 1024).toFixed(1);
+    const heapMb = (mem.heapUsed / 1024 / 1024).toFixed(1);
+    const uptimeMin = (process.uptime() / 60).toFixed(1);
+
+    const reply = `💻 [สถานะระบบ & PM2 Service Monitor]\n\n` +
+                  `• Host Platform: Windows 10/11 x64\n` +
+                  `• Node.js: v20.17.0\n` +
+                  `• บอท Uptime: ${uptimeMin} นาที\n` +
+                  `• Memory Usage: RSS ${rssMb} MB | Heap ${heapMb} MB\n` +
+                  `• PM2 Services: telegram-bot (Active) | ssh-server (Active)\n` +
+                  `• โฟลเดอร์ปฏิบัติการ: E:\\agy\n` +
+                  `• พื้นที่จัดเก็บเอกสาร: E:\\รวมงาน\\งาน 25-26\n` +
+                  `• Background Windows Mode: 100% Silent (Hidden)`;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashMemory(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '🧠 ความจำ & การเรียนรู้ของเลขา');
+    const reply = memoryEngine.formatMemoryForTelegram();
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
+function handleDashGetLatestFile(chatId, cqId) {
+    answerCallbackQuery(cqId, '📁 กำลังค้นหาไฟล์ล่าสุด...');
+    execSilent(`powershell -WindowStyle Hidden -Command "Get-ChildItem -Path 'E:\\รวมงาน\\งาน 25-26' -Include '*.pdf','*.xlsx' -Recurse | Where-Object { $_.Name -notlike 'COA*' -and $_.Name -notlike 'image*' -and $_.FullName -notlike '*\\.trashed*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Select-Object -ExpandProperty FullName"`, (err, stdout) => {
+        const filePath = stdout ? stdout.trim() : '';
+        if (filePath && fs.existsSync(filePath)) {
+            const fileName = path.basename(filePath);
+            sendMessage(chatId, `📁 ไฟล์ Order/PO ล่าสุด: ${fileName}`);
+            sendDocument(chatId, filePath, fileName);
+        } else {
+            sendMessage(chatId, 'ไม่พบไฟล์ Order/PO ในระบบ');
+        }
+    });
+}
+
+function handleDashHelpMenu(chatId, messageId, cqId, backMarkup) {
+    answerCallbackQuery(cqId, '❓ เมนูคำสั่ง');
+    const reply = `❓ [คู่มือการใช้งานระบบเลขา AI]\n\n` +
+                  `📌 1. ปุ่มลัด & แดชบอร์ด:\n` +
+                  `• กดปุ่ม "📊 แดชบอร์ด" เพื่อดูภาพรวมทั้งหมด\n` +
+                  `• กดปุ่ม "🔄 เช็กเมล PO" เพื่อดึงไฟล์เข้า Gmail ทันที\n` +
+                  `• กดปุ่ม "📅 กำหนดส่ง GT" เพื่อดูรอบเตือน D-2\n\n` +
+                  `📌 2. พิมพ์ถามอิสระ (รองรับภาษาไทยธรรมชาติ):\n` +
+                  `• "ขอ order aft sep"\n` +
+                  `• "คำนวณสต็อกกะหล่ำปลีหน่อย"\n` +
+                  `• "รอบส่ง yamamori มีวันไหนบ้าง"\n` +
+                  `• "ขอไฟล์ PO ล่าสุด"\n\n` +
+                  `📌 3. คำสั่งพิเศษ:\n` +
+                  `• /agy <คำสั่ง> - เรียกใช้ Google Antigravity CLI\n` +
+                  `• /glm <คำสั่ง> - เรียกใช้ GLM AI\n` +
+                  `• /cmd <คำสั่ง> - รัน PowerShell ในเครื่อง`;
+    editMessageText(chatId, messageId, reply, backMarkup);
+}
+
 // 3. Telegram Long-Polling Loop (Active 24/7 for user commands)
+
 let isPolling = false;
 
 async function pollUpdates() {
