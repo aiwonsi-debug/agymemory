@@ -630,15 +630,15 @@ const server = http.createServer(async (req, res) => {
                 }
             }
 
-            // Atomic file write using temporary file + renameSync to avoid corruption (Fix C-06, H-14)
+            // Atomic file write using temporary file + rename to avoid corruption (Fix C-06, H-14)
             const tmpFile = `${stockFile}.${process.pid}.${Date.now()}.tmp`;
             try {
-                fs.writeFileSync(tmpFile, JSON.stringify(body, null, 2), 'utf8');
-                fs.renameSync(tmpFile, stockFile);
+                await fs.promises.writeFile(tmpFile, JSON.stringify(body, null, 2), 'utf8');
+                await fs.promises.rename(tmpFile, stockFile);
                 res.writeHead(200);
                 return res.end(JSON.stringify({ success: true, message: 'Stock inventory updated atomically' }));
             } catch (err) {
-                try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (e) {}
+                try { if (fs.existsSync(tmpFile)) await fs.promises.unlink(tmpFile); } catch (e) {}
                 res.writeHead(500);
                 return res.end(JSON.stringify({ success: false, error: 'Failed to commit stock update: ' + err.message }));
             }
