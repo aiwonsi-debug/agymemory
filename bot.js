@@ -1882,7 +1882,6 @@ function handleCommand(chatId, text, msg = null) {
 
                     if (isIntakeOrLoading) {
                         let cardId = 'salaya_0309';
-                        const rawTextLower = text.toLowerCase();
                         const dateStr = result.date || '';
                         if (text.includes('หอมแดง')) {
                             cardId = (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709';
