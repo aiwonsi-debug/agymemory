@@ -304,7 +304,6 @@ function formatUsageForTelegram() {
   const gem = agy.gemini || {};
   const cg = agy.claude_gpt || {};
   
-  const reqPct = rl.limit_requests ? Math.round((rl.remaining_requests / rl.limit_requests) * 100) : 100;
   const tokPct = rl.limit_tokens ? Math.round((rl.remaining_tokens / rl.limit_tokens) * 100) : 100;
 
   const gemWeek = gem.weekly_remaining_pct !== undefined ? gem.weekly_remaining_pct : 81.08;
