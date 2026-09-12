@@ -5,23 +5,6 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 const fs = require('fs');
-
-// Atomic write helper (Fix C-06, H-14)
-function atomicWriteFileSync(filePath, data, encoding) {
-    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-        if (encoding) {
-            fs.writeFileSync(tmpFile, data, encoding);
-        } else {
-            fs.writeFileSync(tmpFile, data);
-        }
-        fs.renameSync(tmpFile, filePath);
-    } catch (e) {
-        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
-        throw e;
-    }
-}
-
 const path = require('path');
 const quotaTracker = require('./ai_quota_tracker.js');
 
@@ -33,6 +16,16 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+function sanitizeSupplierName(name) {
+    if (typeof name !== 'string' || !name.trim()) return name || '';
+    let cleaned = name.replace(/\s*-?\s*[\d,]+(?:\.\d+)?\s*(?:บาท|บ\.?)/g, '');
+    cleaned = cleaned.replace(/\(\s*\)/g, '');
+    cleaned = cleaned.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+    cleaned = cleaned.replace(/\s{2,}/g, ' ').trim();
+    cleaned = cleaned.replace(/[-,]\s*$/, '').trim();
+    return cleaned;
 }
 
 
@@ -48,6 +41,7 @@ function resolveOpsHtmlPath() {
     return candidates[0];
 }
 const mobileHtmlFile = resolveOpsHtmlPath();
+const aiHtmlFile = path.join(__dirname, 'ai_dashboard.html');
 const teamOpsFile = path.join(__dirname, 'team_ops_status.json');
 const stockFile = path.join(__dirname, 'stock_inventory.json');
 const GAS_URL = process.env.GAS_WEBHOOK_URL || 'https://script.google.com/macros/s/AKfycbzwaao-vW7IdWqltSpFMbN7KGlU2IydbAojKmGLdEJWQ6Q_g1wCXtA1i65n_S7FHk5H/exec';
@@ -110,8 +104,8 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days persistent operation
 // Team Access Code resolution: dedicated code or fallback to PSC_API_KEY
 const TEAM_ACCESS_CODE = (process.env.TEAM_ACCESS_CODE || process.env.PSC_TEAM_CODE || '9624').trim();
 
-// Session Secret: Derived from persistent environment or a secure runtime fallback
-const SESSION_SECRET = (process.env.SESSION_SECRET || process.env.PSC_SESSION_SECRET || crypto.randomBytes(32).toString('hex')).trim();
+// Session Secret: Derived from persistent environment or deterministic team secret
+const SESSION_SECRET = (process.env.SESSION_SECRET || process.env.PSC_SESSION_SECRET || ('psc_hmac_secret_' + TEAM_ACCESS_CODE + '_sec2026')).trim();
 
 function verifyTeamOrMasterCode(inputCode) {
     if (!inputCode) return false;
@@ -168,7 +162,7 @@ function isValidWebSession(token) {
 const RENDER_DASHBOARD_URL = process.env.RENDER_DASHBOARD_URL || 'https://pscdb.onrender.com';
 
 function syncToRender(endpoint, payload) {
-    if (!RENDER_DASHBOARD_URL) return;
+    if (process.env.RENDER || !RENDER_DASHBOARD_URL) return;
     try {
         const postData = JSON.stringify(payload);
         const parsed = url.parse(RENDER_DASHBOARD_URL);
@@ -211,19 +205,15 @@ function syncToGoogleSheets(payload) {
 
         const req = https.request(options, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                const redUrl = url.parse(res.headers.location);
-                const redReq = https.request({
-                    hostname: redUrl.hostname,
-                    path: redUrl.path,
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Content-Length': Buffer.byteLength(postData)
-                    }
-                }, () => {});
-                redReq.on('error', () => {});
-                redReq.write(postData);
-                redReq.end();
+                https.get(res.headers.location, (redRes) => {
+                    let resData = '';
+                    redRes.on('data', c => resData += c);
+                    redRes.on('end', () => {
+                        // GAS returns JSON response after redirect
+                    });
+                }).on('error', (err) => {
+                    console.error('[GoogleSheets Redirect Sync Error]:', err.message);
+                });
             }
         });
 
@@ -272,7 +262,8 @@ function loadTeamOps() {
         history_logs: [], 
         cards_state: {},
         custom_suppliers: [],
-        custom_trucks: []
+        custom_trucks: [],
+        other_tasks: []
     };
     const targetOpsFile = fs.existsSync(teamOpsFile) ? teamOpsFile : (fs.existsSync(teamOpsFile + '.example') ? (teamOpsFile + '.example') : null);
     if (targetOpsFile) {
@@ -281,6 +272,7 @@ function loadTeamOps() {
             if (!data.cards_state) data.cards_state = {};
             if (!data.custom_suppliers) data.custom_suppliers = [];
             if (!data.custom_trucks) data.custom_trucks = [];
+            if (!data.other_tasks) data.other_tasks = [];
         } catch (e) {}
     }
     return data;
@@ -308,17 +300,32 @@ function recordLoadingReport(reportObj) {
         opsData.cards_state[cardId].rawReport = reportObj.rawText;
     }
 
-    opsData.history_logs.unshift({
-        id: 'LOG-' + Date.now(),
-        timestamp: new Date().toISOString(),
-        date: reportObj.date,
-        item: reportObj.item,
-        weight: reportObj.weight,
-        freight: reportObj.freight,
-        payment: reportObj.payment,
-        location: reportObj.location,
-        cardId: cardId
-    });
+    const existingLog = opsData.history_logs.find(l => 
+        (cardId && l.cardId === cardId) ||
+        (l.date === reportObj.date && l.item === reportObj.item && l.weight === reportObj.weight)
+    );
+    if (existingLog) {
+        existingLog.timestamp = new Date().toISOString();
+        existingLog.date = reportObj.date;
+        existingLog.item = reportObj.item;
+        existingLog.weight = reportObj.weight;
+        existingLog.freight = reportObj.freight;
+        existingLog.payment = reportObj.payment;
+        existingLog.location = reportObj.location;
+        if (cardId) existingLog.cardId = cardId;
+    } else {
+        opsData.history_logs.unshift({
+            id: 'LOG-' + Date.now(),
+            timestamp: new Date().toISOString(),
+            date: reportObj.date,
+            item: reportObj.item,
+            weight: reportObj.weight,
+            freight: reportObj.freight,
+            payment: reportObj.payment,
+            location: reportObj.location,
+            cardId: cardId
+        });
+    }
 
     if (opsData.history_logs.length > 50) opsData.history_logs.pop();
     saveTeamOps(opsData);
@@ -332,9 +339,12 @@ function recordLoadingReport(reportObj) {
 
 function saveTeamOps(data) {
     data.last_updated = new Date().toISOString();
+    const tmpFile = `${teamOpsFile}.${process.pid}.${Date.now()}.tmp`;
     try {
-        atomicWriteFileSync(teamOpsFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tmpFile, teamOpsFile);
     } catch (e) {
+        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
         console.error('[saveTeamOps Error]:', e.message);
     }
 }
@@ -374,10 +384,6 @@ const server = http.createServer(async (req, res) => {
         req.on('data', chunk => {
             length += chunk.length;
             if (length > MAX_BODY_SIZE) {
-                if (!res.headersSent) {
-                    res.writeHead(413, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: false, error: 'Payload Too Large: Exceeded 1MB limit' }));
-                }
                 req.destroy();
                 return reject(new Error('Payload Too Large: Exceeded 1MB limit'));
             }
@@ -433,15 +439,7 @@ const server = http.createServer(async (req, res) => {
                 res.setHeader('Content-Type', mimeType);
                 res.setHeader('Cache-Control', 'no-cache, must-revalidate');
                 res.writeHead(200);
-                const readStream = fs.createReadStream(staticPath);
-                readStream.on('error', (err) => {
-                    console.error('[StaticFileError]', err);
-                    if (!res.headersSent) {
-                        res.writeHead(500);
-                        res.end('Internal Server Error');
-                    }
-                });
-                return readStream.pipe(res);
+                return res.end(fs.readFileSync(staticPath));
             }
         }
 
@@ -522,13 +520,15 @@ const server = http.createServer(async (req, res) => {
 
                 // If authenticating via key or renewing valid session
                 const sessionToken = hasValidSession ? existingSession : generateWebSessionToken(true);
-                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production';
+                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
                 const maxAgeSec = 30 * 24 * 60 * 60; // 30 days
-                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${isHttps ? '; Secure' : ''}`;
+                const sameSiteAttr = isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax';
+                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; ${sameSiteAttr}`;
                 res.setHeader('Set-Cookie', cookieFlags);
                 res.writeHead(200);
                 const htmlContent = fs.readFileSync(mobileHtmlFile, 'utf8')
-                    .replace(/__PSC_API_KEY_PLACEHOLDER__/g, '');
+                    .replace(/__PSC_API_KEY_PLACEHOLDER__/g, '')
+                    .replace('</head>', `<script>try { localStorage.setItem('PSC_SESSION_TOKEN', '${sessionToken}'); } catch(e){}</script></head>`);
                 return res.end(htmlContent);
             } else {
                 res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -546,9 +546,10 @@ const server = http.createServer(async (req, res) => {
             const accessKey = (body.access_code || body.key || body.auth || '').trim();
             if (verifyTeamOrMasterCode(accessKey)) {
                 const sessionToken = generateWebSessionToken(true);
-                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production';
+                const isHttps = req.headers['x-forwarded-proto'] === 'https' || (req.connection && req.connection.encrypted) || process.env.NODE_ENV === 'production' || !!process.env.RENDER;
                 const maxAgeSec = 30 * 24 * 60 * 60; // 30 days
-                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${isHttps ? '; Secure' : ''}`;
+                const sameSiteAttr = isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax';
+                const cookieFlags = `psc_session=${sessionToken}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; ${sameSiteAttr}`;
                 res.setHeader('Set-Cookie', cookieFlags);
                 res.writeHead(200);
                 return res.end(JSON.stringify({ 
@@ -579,9 +580,7 @@ const server = http.createServer(async (req, res) => {
             isSessionAuth = isValidWebSession(cookieSession) || isValidWebSession(bearerToken) || isValidWebSession(headerSession);
 
             const isAuthorized = PSC_API_KEY && (isMasterAuth || isSessionAuth);
-            const isPublicWebhook = (pathname === '/api/gmail-webhook' || pathname === '/api/gmail-push');
-
-            if (!isAuthorized && !isPublicWebhook) {
+            if (!isAuthorized) {
                 res.writeHead(401);
                 return res.end(JSON.stringify({ 
                     success: false, 
@@ -658,11 +657,14 @@ const server = http.createServer(async (req, res) => {
             }
 
             // Atomic file write using temporary file + renameSync to avoid corruption (Fix C-06, H-14)
+            const tmpFile = `${stockFile}.${process.pid}.${Date.now()}.tmp`;
             try {
-                atomicWriteFileSync(stockFile, JSON.stringify(body, null, 2), 'utf8');
+                fs.writeFileSync(tmpFile, JSON.stringify(body, null, 2), 'utf8');
+                fs.renameSync(tmpFile, stockFile);
                 res.writeHead(200);
                 return res.end(JSON.stringify({ success: true, message: 'Stock inventory updated atomically' }));
             } catch (err) {
+                try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (e) {}
                 res.writeHead(500);
                 return res.end(JSON.stringify({ success: false, error: 'Failed to commit stock update: ' + err.message }));
             }
@@ -690,12 +692,14 @@ const server = http.createServer(async (req, res) => {
                 stockFile + '.example'
             ].find(f => fs.existsSync(f));
             if (targetStockFile) {
-                try {
-                    stockData = JSON.parse(await fs.promises.readFile(targetStockFile, 'utf8'));
-                } catch (e) {}
-            }
-            res.writeHead(200);
-            return res.end(JSON.stringify(stockData, null, 2));
+          try {
+            stockData = JSON.parse(fs.readFileSync(targetStockFile, 'utf8'));
+          } catch (e) {}
+        }
+        // Prevent caching of stock data to ensure UI reflects latest values
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.writeHead(200);
+        return res.end(JSON.stringify(stockData, null, 2));
         }
 
         // 2. Health Check
@@ -719,7 +723,7 @@ const server = http.createServer(async (req, res) => {
             }
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
             try {
-                atomicWriteFileSync(rebootSigFile, new Date().toISOString(), 'utf8');
+                fs.writeFileSync(rebootSigFile, new Date().toISOString(), 'utf8');
                 console.log('[Bot Reboot Requested from Team Dashboard] Reboot signal written.');
                 res.writeHead(200);
                 return res.end(JSON.stringify({ 
@@ -776,19 +780,28 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET' && pathname === '/api/team-status') {
             const ops = loadTeamOps();
             
-            // Fetch latest from Google Sheets
+            // Fetch latest from Google Sheets and merge with conflict resolution
             try {
                 const sheetData = await fetchGoogleSheetsData();
                 if (sheetData && typeof sheetData === 'object') {
                     if (!ops.cards_state) ops.cards_state = {};
-                    Object.keys(sheetData).forEach(id => {
-                        const item = sheetData[id];
-                        if (item) {
-                            if (!ops.cards_state[id]) ops.cards_state[id] = { id: id };
-                            if (item.supplier) ops.cards_state[id].supplier = item.supplier;
-                            if (item.truck) ops.cards_state[id].truck = item.truck;
-                            if (item.orderChecked !== undefined) ops.cards_state[id].orderChecked = item.orderChecked;
-                            if (item.truckChecked !== undefined) ops.cards_state[id].truckChecked = item.truckChecked;
+                    Object.keys(sheetData).forEach(rawId => {
+                        const id = rawId.trim();
+                        const item = sheetData[rawId];
+                        if (item && id) {
+                            const localItem = ops.cards_state[id];
+                            const localUpdatedAt = localItem && localItem.updatedAt ? new Date(localItem.updatedAt).getTime() : 0;
+                            const sheetUpdatedAt = item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+                            
+                            // Only allow Google Sheets to update if local state doesn't have newer changes
+                            if (!localItem || sheetUpdatedAt >= localUpdatedAt) {
+                                if (!ops.cards_state[id]) ops.cards_state[id] = { id: id };
+                                if (item.supplier) ops.cards_state[id].supplier = item.supplier;
+                                if (item.truck) ops.cards_state[id].truck = item.truck;
+                                if (item.orderChecked !== undefined) ops.cards_state[id].orderChecked = item.orderChecked;
+                                if (item.truckChecked !== undefined) ops.cards_state[id].truckChecked = item.truckChecked;
+                                if (item.updatedAt) ops.cards_state[id].updatedAt = item.updatedAt;
+                            }
                         }
                     });
                 }
@@ -815,14 +828,18 @@ const server = http.createServer(async (req, res) => {
             const opsData = loadTeamOps();
             if (!opsData.cards_state) opsData.cards_state = {};
 
-            const activeSupplier = supplier || farm;
+            const rawSupplier = supplier || farm;
+            const activeSupplier = rawSupplier ? sanitizeSupplierName(rawSupplier) : rawSupplier;
+            const cleanTruck = truck ? sanitizeSupplierName(truck) : truck;
 
             if (id) {
+                const nowIso = new Date().toISOString();
                 if (!opsData.cards_state[id]) opsData.cards_state[id] = { id: id };
                 if (activeSupplier !== undefined) opsData.cards_state[id].supplier = activeSupplier;
-                if (truck !== undefined) opsData.cards_state[id].truck = truck;
+                if (cleanTruck !== undefined) opsData.cards_state[id].truck = cleanTruck;
                 if (orderChecked !== undefined) opsData.cards_state[id].orderChecked = orderChecked;
                 if (truckChecked !== undefined) opsData.cards_state[id].truckChecked = truckChecked;
+                opsData.cards_state[id].updatedAt = nowIso;
 
                 // Auto-add custom seller/location to database & memory
                 if (activeSupplier && activeSupplier !== '__custom__' && activeSupplier.trim() !== '') {
@@ -848,26 +865,48 @@ const server = http.createServer(async (req, res) => {
                     supplier: opsData.cards_state[id].supplier || '',
                     truck: opsData.cards_state[id].truck || '',
                     orderChecked: !!opsData.cards_state[id].orderChecked,
-                    truckChecked: !!opsData.cards_state[id].truckChecked
+                    truckChecked: !!opsData.cards_state[id].truckChecked,
+                    updatedAt: nowIso
                 });
             }
 
             if (activeSupplier && product && qty_kg) {
-                const opId = `OPS-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Date.now().toString().slice(-4)}`;
-                const newOp = {
-                    id: opId,
-                    timestamp: new Date().toISOString(),
-                    customer: customer || 'โรงงานศาลายา / TNS',
-                    delivery_date: delivery_date || '2026-09-01',
-                    farm: activeSupplier,
-                    product: product,
-                    qty_kg: parseFloat(qty_kg),
-                    truck: truck || 'รถ 6 ล้อ',
-                    status: status || 'สั่งของ/สั่งรถแล้ว',
-                    recorder: recorder || 'ทีมงาน PSC',
-                    notes: notes || ''
-                };
-                opsData.active_operations.push(newOp);
+                if (!opsData.active_operations) opsData.active_operations = [];
+                let existingIndex = -1;
+                if (id) {
+                    existingIndex = opsData.active_operations.findIndex(o => o.card_id === id || o.id === id);
+                }
+                if (existingIndex === -1 && delivery_date && product) {
+                    existingIndex = opsData.active_operations.findIndex(o => o.delivery_date === delivery_date && o.product === product && (!customer || o.customer === customer));
+                }
+
+                if (existingIndex >= 0) {
+                    const existing = opsData.active_operations[existingIndex];
+                    existing.farm = activeSupplier;
+                    existing.truck = cleanTruck || existing.truck || 'รถ 6 ล้อ';
+                    if (status) existing.status = status;
+                    if (recorder) existing.recorder = recorder;
+                    if (notes) existing.notes = notes;
+                    if (id && !existing.card_id) existing.card_id = id;
+                    existing.timestamp = new Date().toISOString();
+                } else {
+                    const opId = `OPS-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Date.now().toString().slice(-4)}`;
+                    const newOp = {
+                        id: opId,
+                        card_id: id || '',
+                        timestamp: new Date().toISOString(),
+                        customer: customer || 'โรงงานศาลายา / TNS',
+                        delivery_date: delivery_date || '2026-09-01',
+                        farm: activeSupplier,
+                        product: product,
+                        qty_kg: parseFloat(qty_kg),
+                        truck: cleanTruck || 'รถ 6 ล้อ',
+                        status: status || 'สั่งของ/สั่งรถแล้ว',
+                        recorder: recorder || 'ทีมงาน PSC',
+                        notes: notes || ''
+                    };
+                    opsData.active_operations.push(newOp);
+                }
             }
 
             saveTeamOps(opsData);
@@ -878,6 +917,75 @@ const server = http.createServer(async (req, res) => {
                 message: 'Updated successfully and synced to Google Sheets',
                 cards_state: opsData.cards_state
             }, null, 2));
+        }
+
+        // Endpoint: Add Other Task / Planting Task
+        if (req.method === 'POST' && pathname === '/api/add-other-task') {
+            const body = await getBody();
+            const opsData = loadTeamOps();
+            if (!opsData.other_tasks) opsData.other_tasks = [];
+
+            const taskType = (body.task_type || 'งานปลูก').trim();
+            const seller = (body.seller || '-').trim();
+            const crop = (body.crop || '-').trim();
+            const targetCustomer = (body.target_customer || 'TNS').trim();
+            const targetDelivery = (body.target_delivery || 'ปลายเดือน 9').trim();
+            const status = (body.status || 'รอดำเนินการ').trim();
+            const notes = (body.notes || '').trim();
+
+            // Prevent spam/double submission if duplicate exists within 30 seconds
+            const now = Date.now();
+            const duplicate = opsData.other_tasks.find(t => {
+                const diffMs = now - new Date(t.updated_at).getTime();
+                return diffMs < 30000 &&
+                       t.task_type === taskType &&
+                       t.crop === crop &&
+                       t.seller === seller &&
+                       t.target_customer === targetCustomer &&
+                       t.target_delivery === targetDelivery;
+            });
+
+            if (duplicate) {
+                res.writeHead(200);
+                return res.end(JSON.stringify({ 
+                    success: true, 
+                    message: 'รายการนี้เพิ่งถูกบันทึกไปแล้ว (ตรวจจับการกดซ้ำ)', 
+                    task: duplicate, 
+                    other_tasks: opsData.other_tasks 
+                }));
+            }
+
+            const newId = 'TASK-' + Date.now();
+            const taskObj = {
+                id: newId,
+                task_type: taskType,
+                seller: seller,
+                crop: crop,
+                target_customer: targetCustomer,
+                target_delivery: targetDelivery,
+                status: status,
+                notes: notes,
+                updated_at: new Date().toISOString()
+            };
+            opsData.other_tasks.unshift(taskObj);
+            saveTeamOps(opsData);
+            syncToRender('/api/add-other-task', taskObj);
+            res.writeHead(200);
+            return res.end(JSON.stringify({ success: true, message: 'บันทึกงานใหม่เรียบร้อย', task: taskObj, other_tasks: opsData.other_tasks }));
+        }
+
+        // Endpoint: Delete Other Task
+        if (req.method === 'POST' && pathname === '/api/delete-other-task') {
+            const body = await getBody();
+            const { id } = body;
+            const opsData = loadTeamOps();
+            if (opsData.other_tasks) {
+                opsData.other_tasks = opsData.other_tasks.filter(t => t.id !== id);
+                saveTeamOps(opsData);
+                syncToRender('/api/delete-other-task', { id });
+            }
+            res.writeHead(200);
+            return res.end(JSON.stringify({ success: true, message: 'ลบรายการงานเรียบร้อย', other_tasks: opsData.other_tasks }));
         }
 
         // 6. Team Reset POST
@@ -893,6 +1001,32 @@ const server = http.createServer(async (req, res) => {
             }
             res.writeHead(200);
             return res.end(JSON.stringify({ success: true, message: `Card ${id} reset successfully` }));
+        }
+
+        // 7. Team Complete POST (Manual Mark Done)
+        if (req.method === 'POST' && pathname === '/api/team-complete') {
+            const body = await getBody();
+            const { id } = body;
+            const opsData = loadTeamOps();
+            if (!opsData.cards_state) opsData.cards_state = {};
+            if (!opsData.cards_state[id]) opsData.cards_state[id] = { id: id };
+
+            const now = new Date();
+            const thaiDate = ('0' + now.getDate()).slice(-2) + '/' + ('0' + (now.getMonth() + 1)).slice(-2) + '/' + (now.getFullYear() + 543).toString().slice(-2);
+            opsData.cards_state[id].loadedReported = true;
+            opsData.cards_state[id].reportedAt = now.toISOString();
+            opsData.cards_state[id].orderChecked = true;
+            opsData.cards_state[id].truckChecked = true;
+            if (!opsData.cards_state[id].loadedDate) opsData.cards_state[id].loadedDate = thaiDate;
+            if (!opsData.cards_state[id].loadedItem && opsData.cards_state[id].supplier) {
+                opsData.cards_state[id].loadedItem = opsData.cards_state[id].supplier;
+            }
+            saveTeamOps(opsData);
+            syncToGoogleSheets(opsData.cards_state[id]);
+            syncToRender('/api/team-complete', { id: id });
+
+            res.writeHead(200);
+            return res.end(JSON.stringify({ success: true, message: `Card ${id} marked completed successfully`, cards_state: opsData.cards_state }));
         }
 
         // 404 Fallback
@@ -927,4 +1061,4 @@ if (require.main === module) {
     createWebhookServer(null);
 }
 
-module.exports = { createWebhookServer, WEBHOOK_PORT: PORT, loadTeamOps, saveTeamOps, recordLoadingReport, syncToRender, server, escapeHtml };
+module.exports = { createWebhookServer, WEBHOOK_PORT: PORT, loadTeamOps, saveTeamOps, recordLoadingReport, syncToRender, server };
