@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('./tns_order_parser.js');
 
-const agyBaseDir = 'E:\\agy';
 const workspaceDir = 'E:\\รวมงาน\\งาน 25-26';
 
 /**
