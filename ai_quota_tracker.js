@@ -2,6 +2,23 @@
 'use strict';
 
 const fs = require('fs');
+
+// Atomic write helper (Fix C-06, H-14)
+function atomicWriteFileSync(filePath, data, encoding) {
+    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        if (encoding) {
+            fs.writeFileSync(tmpFile, data, encoding);
+        } else {
+            fs.writeFileSync(tmpFile, data);
+        }
+        fs.renameSync(tmpFile, filePath);
+    } catch (e) {
+        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
+        throw e;
+    }
+}
+
 const path = require('path');
 const https = require('https');
 const url = require('url');
@@ -114,7 +131,7 @@ function syncQuotaToRender(data) {
 function saveQuotaData(data, shouldSync = true) {
   data.last_updated = new Date().toISOString();
   try {
-    fs.writeFileSync(QUOTA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    atomicWriteFileSync(QUOTA_FILE, JSON.stringify(data, null, 2), 'utf8');
     if (shouldSync) {
       syncQuotaToRender(data);
     }

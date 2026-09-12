@@ -4,6 +4,23 @@ const { calculateTransitLoss } = require('./psc_core_logic.js');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+
+// Atomic write helper (Fix C-06, H-14)
+function atomicWriteFileSync(filePath, data, encoding) {
+    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        if (encoding) {
+            fs.writeFileSync(tmpFile, data, encoding);
+        } else {
+            fs.writeFileSync(tmpFile, data);
+        }
+        fs.renameSync(tmpFile, filePath);
+    } catch (e) {
+        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
+        throw e;
+    }
+}
+
 const { exec, spawn } = require('child_process');
 const memoryEngine = require('./memory_engine.js');
 const quotaTracker = require('./ai_quota_tracker.js');
@@ -94,9 +111,7 @@ function backupStockSnapshot(stockObj) {
         const todayStr = new Date().toISOString().slice(0, 10);
         const dailyBackupFile = path.join(backupDir, `stock_inventory_${todayStr}.json`);
         
-        const tmpDaily = `${dailyBackupFile}.${process.pid}.${Date.now()}.tmp`;
-        fs.writeFileSync(tmpDaily, JSON.stringify(stockObj, null, 2), 'utf8');
-        fs.renameSync(tmpDaily, dailyBackupFile);
+        atomicWriteFileSync(dailyBackupFile, JSON.stringify(stockObj, null, 2), 'utf8');
 
         const backups = fs.readdirSync(backupDir)
             .filter(f => f.startsWith('stock_inventory_') && f.endsWith('.json'))
@@ -656,7 +671,7 @@ function handleCallbackQuery(cq) {
     else if (data === 'dash_toggle_engine') {
         currentAiEngine = (currentAiEngine === 'agy') ? 'glm' : 'agy';
         config.DefaultEngine = currentAiEngine;
-        try { fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
+        try { atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
         
         answerCallbackQuery(cqId, `✅ สลับ AI Engine เป็น ${currentAiEngine.toUpperCase()} เรียบร้อยแล้ว!`, true);
         editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
@@ -729,7 +744,7 @@ async function pollUpdates() {
         if (res && res.ok && Array.isArray(res.result)) {
             for (const upd of res.result) {
                 lastUpdateId = upd.update_id;
-                try { fs.writeFileSync(updateIdFile, String(lastUpdateId), 'utf8'); } catch (e) {}
+                try { atomicWriteFileSync(updateIdFile, String(lastUpdateId), 'utf8'); } catch (e) {}
                 
                 // Handle Inline Keyboard Button Taps
                 if (upd.callback_query) {
@@ -772,7 +787,7 @@ async function pollUpdates() {
                                     saveTargets.forEach(st => {
                                         try {
                                             fs.mkdirSync(path.dirname(st), { recursive: true });
-                                            fs.writeFileSync(st, buf);
+                                            atomicWriteFileSync(st, buf);
                                         } catch(e) {}
                                     });
                                     sendMessage(chatId, `✅ บันทึกไฟล์ ${docName} เข้าพื้นที่ทำงานเรียบร้อยแล้ว!\nระบบทำการอัปเดตตารางคำสั่งซื้อและกำหนดการแจ้งเตือนสดให้ทันทีครับ 🚀`);
@@ -1426,7 +1441,7 @@ function handleCommand(chatId, text, msg = null) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('flash') ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
             OKMD_CONFIG.Provider = 'Deepseek';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OKMD (${OKMD_CONFIG.Model})\nพร้อมตอบคำถามทันใจและจำกฎธุรกิจทั้งหมดแล้วครับ! ✨`);
             return;
         }
@@ -1436,7 +1451,7 @@ function handleCommand(chatId, text, msg = null) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('4.6') ? 'claude-sonnet-4.6' : 'claude-sonnet-5';
             OKMD_CONFIG.Provider = 'Claude';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Claude (${OKMD_CONFIG.Model})\nภาษาไทยเนียนระดับพรีเมียม พร้อมทำงานทันทีครับ! 🌸`);
             return;
         }
@@ -1446,7 +1461,7 @@ function handleCommand(chatId, text, msg = null) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('mini') ? 'gpt-5.4-mini' : 'gpt-5.4';
             OKMD_CONFIG.Provider = 'OpenAI';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OpenAI (${OKMD_CONFIG.Model})\nพร้อมประมวลผลคำสั่งแล้วครับ! ⚡`);
             return;
         }
@@ -1456,7 +1471,7 @@ function handleCommand(chatId, text, msg = null) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('3.7') ? 'gemini-3.7-flash' : 'gemini-2.5-flash-lite';
             OKMD_CONFIG.Provider = 'Gemini';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Google Gemini (${OKMD_CONFIG.Model})\nความเร็วสูงพิเศษ พร้อมทำงานแล้วครับ! 🚀`);
             return;
         }
@@ -1466,7 +1481,7 @@ function handleCommand(chatId, text, msg = null) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = 'qwen3.7-plus';
             OKMD_CONFIG.Provider = 'Qwen';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Qwen (${OKMD_CONFIG.Model})\nพร้อมคำนวณและวิเคราะห์ลอจิกแล้วครับ! 🧮`);
             return;
         }
@@ -1483,9 +1498,9 @@ function handleCommand(chatId, text, msg = null) {
                 } else {
                     glmConfig.Model = targetModel;
                 }
-                fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
+                atomicWriteFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
             }
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลเริ่มต้นเป็น: GLM (${glmConfig.Model || 'glm-5.3-flash'})\nพิมพ์ข้อความหรือคำสั่งได้โดยตรง ระบบจะส่งให้ GLM ประมวลผล`);
             return;
         }
@@ -1494,7 +1509,7 @@ function handleCommand(chatId, text, msg = null) {
         if (targetModel === 'agy' || targetModel === 'antigravity') {
             currentAiEngine = 'agy';
             config.DefaultEngine = 'agy';
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลเริ่มต้นเป็น: AGY CLI (Google Antigravity)\nพิมพ์ข้อความหรือคำสั่งได้โดยตรง ระบบจะส่งให้ AGY CLI ประมวลผล`);
             return;
         }
@@ -1512,7 +1527,7 @@ function handleCommand(chatId, text, msg = null) {
             try { glmConfig = JSON.parse(fs.readFileSync(glmCfgPath, 'utf8').replace(/^\uFEFF/, '')); } catch(e){}
         }
         glmConfig.BaseUrl = url;
-        fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
+        atomicWriteFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
         sendMessage(chatId, `[GLM Config]\nบันทึก Base URL เรียบร้อยแล้ว: ${url}\nโมเดล: ${glmConfig.Model}`);
         return;
     }
@@ -1832,16 +1847,12 @@ function handleCommand(chatId, text, msg = null) {
                         if (result.date) stock.AsOfDate = result.date;
                         
                         // Atomic Write with tmp file and renameSync (AUD-02)
-                        const tmpStockPath = `${stockPath}.${process.pid}.${Date.now()}.tmp`;
-                        fs.writeFileSync(tmpStockPath, JSON.stringify(stock, null, 2), 'utf8');
-                        fs.renameSync(tmpStockPath, stockPath);
+                        atomicWriteFileSync(stockPath, JSON.stringify(stock, null, 2), 'utf8');
                         backupStockSnapshot(stock);
                         
                         try {
                             const renderStockPath = path.join(agyBaseDir, 'render-dashboard', 'stock_inventory.json');
-                            const tmpRenderPath = `${renderStockPath}.${process.pid}.${Date.now()}.tmp`;
-                            fs.writeFileSync(tmpRenderPath, JSON.stringify(stock, null, 2), 'utf8');
-                            fs.renameSync(tmpRenderPath, renderStockPath);
+                            atomicWriteFileSync(renderStockPath, JSON.stringify(stock, null, 2), 'utf8');
                         } catch(e){}
                         
                         if (stockUpdated) {
@@ -1922,8 +1933,8 @@ function handleCommand(chatId, text, msg = null) {
                                         SampleTest: { sampleKg: result.sample_kg || 100, peeledKg: result.peeled_kg || 0, actualYield: (calcYield ? calcYield/100 : null) },
                                         Notes: text
                                     });
-                                    fs.writeFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
-                                    try { fs.writeFileSync(path.join(agyBaseDir, 'render-dashboard', 'cabbage_prices_transport.json'), JSON.stringify(cp, null, 2), 'utf8'); } catch(e){}
+                                    atomicWriteFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
+                                    try { atomicWriteFileSync(path.join(agyBaseDir, 'render-dashboard', 'cabbage_prices_transport.json'), JSON.stringify(cp, null, 2), 'utf8'); } catch(e){}
                                 }
                             } catch(e){}
                         }
@@ -2119,7 +2130,7 @@ function handleCommand(chatId, text, msg = null) {
         sendMessage(chatId, '🔄 <b>[กำลังรีสตาร์ตระบบบอทเลขา...]</b>\n\nระบบกำลังตัดการทำงานและเริ่มใหม่อัตโนมัติใน 1 วินาทีค่ะ 🚀');
         setTimeout(() => {
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
-            try { fs.writeFileSync(rebootSigFile, new Date().toISOString(), 'utf8'); } catch(e) {}
+            try { atomicWriteFileSync(rebootSigFile, new Date().toISOString(), 'utf8'); } catch(e) {}
             // Force exit this process, Supervisor will instantly relaunch it!
             process.exit(0);
         }, 800);
