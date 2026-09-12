@@ -1097,15 +1097,18 @@ function runAgyCli(chatId, promptText) {
     let timedOut = false;
     
     // Spawn with FULL REASONING (No effort limitation) and Full Tool Permissions
-    const child = spawn(agyExe, ['--continue', '-p', fullPrompt], {
+    const child = spawn(agyExe, ['--continue'], {
         cwd: 'E:\\รวมงาน\\งาน 25-26',
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         env: Object.assign({}, process.env, {
             PATH: `C:\\Users\\624\\AppData\\Local\\agy\\bin;C:\\Users\\624\\tools\\nodejs;${process.env.PATH}`
         })
     });
     
+    child.stdin.write(fullPrompt);
+    child.stdin.end();
+
     let stdoutData = '';
     let stderrData = '';
     
