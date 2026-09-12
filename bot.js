@@ -1336,7 +1336,7 @@ function runGlm(chatId, promptText) {
     
     const isLocal = glmConfig.BaseUrl && (glmConfig.BaseUrl.includes('localhost') || glmConfig.BaseUrl.includes('127.0.0.1'));
     if (!glmConfig.ApiKey && !isLocal) {
-        sendMessage(chatId, `[GLM AI Engine]\nยังไม่ได้ตั้งค่า API Key สำหรับ GLM\n\nสามารถตั้งค่าโดยพิมพ์:\n/set_glm_key <API_KEY_ของคุณ>\n\n(หากใช้ Local Open Weights ให้ตั้ง URL ด้วย /set_glm_url http://localhost:11434/v1)`);
+        sendMessage(chatId, `[GLM AI Engine]\nยังไม่ได้ตั้งค่า API Key สำหรับ GLM\n\n⛔ เพื่อความปลอดภัย กรุณาตั้งค่า API Key ในไฟล์คอนฟิก (glm_config.json) หรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง\n\n(หากใช้ Local Open Weights ให้ตั้ง URL ด้วย /set_glm_url http://localhost:11434/v1)`);
         return;
     }
     
