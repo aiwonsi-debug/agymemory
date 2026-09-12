@@ -433,7 +433,15 @@ const server = http.createServer(async (req, res) => {
                 res.setHeader('Content-Type', mimeType);
                 res.setHeader('Cache-Control', 'no-cache, must-revalidate');
                 res.writeHead(200);
-                return res.end(fs.readFileSync(staticPath));
+                const readStream = fs.createReadStream(staticPath);
+                readStream.on('error', (err) => {
+                    console.error('[StaticFileError]', err);
+                    if (!res.headersSent) {
+                        res.writeHead(500);
+                        res.end('Internal Server Error');
+                    }
+                });
+                return readStream.pipe(res);
             }
         }
 
