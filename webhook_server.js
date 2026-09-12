@@ -110,8 +110,8 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days persistent operation
 // Team Access Code resolution: dedicated code or fallback to PSC_API_KEY
 const TEAM_ACCESS_CODE = (process.env.TEAM_ACCESS_CODE || process.env.PSC_TEAM_CODE || '9624').trim();
 
-// Session Secret: Derived from persistent environment or deterministic team secret
-const SESSION_SECRET = (process.env.SESSION_SECRET || process.env.PSC_SESSION_SECRET || ('psc_hmac_secret_' + TEAM_ACCESS_CODE + '_sec2026')).trim();
+// Session Secret: Derived from persistent environment or a secure runtime fallback
+const SESSION_SECRET = (process.env.SESSION_SECRET || process.env.PSC_SESSION_SECRET || crypto.randomBytes(32).toString('hex')).trim();
 
 function verifyTeamOrMasterCode(inputCode) {
     if (!inputCode) return false;
