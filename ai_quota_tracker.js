@@ -1,32 +1,23 @@
-// AI Quota & Usage Tracker with Loop-Safe Sync
+// AI Quota & Usage Tracker with Loop-Safe Sync (bloat‑reduced)
 'use strict';
 
 const fs = require('fs');
-
-// Atomic write helper (Fix C-06, H-14)
-function atomicWriteFileSync(filePath, data, encoding) {
-    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-        if (encoding) {
-            fs.writeFileSync(tmpFile, data, encoding);
-        } else {
-            fs.writeFileSync(tmpFile, data);
-        }
-        fs.renameSync(tmpFile, filePath);
-    } catch (e) {
-        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
-        throw e;
-    }
-}
-
 const path = require('path');
 const https = require('https');
 const url = require('url');
 
-const QUOTA_FILE = path.join(__dirname, 'ai_quota_usage.json');
+const QUOTA_FILE = process.env.AI_QUOTA_USAGE_FILE || path.join(__dirname, 'ai_quota_usage.json');
 const PSC_API_KEY = (process.env.PSC_API_KEY || '').trim();
 const RENDER_DASHBOARD_URL = process.env.RENDER_DASHBOARD_URL || 'https://pscdb.onrender.com';
 
+function formatPct(val) {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return '0.00%';
+  return num.toFixed(2) + '%';
+}
+
+// True defaults only — no live/runtime data hardcoded here.
+// Real numbers should come from the persisted QUOTA_FILE or from updateAgyQuota() calls.
 const DEFAULT_DATA = {
   last_updated: new Date().toISOString(),
   groq: {
@@ -49,17 +40,17 @@ const DEFAULT_DATA = {
     account: 'aiwonsi@gmail.com',
     gemini: {
       models: 'Gemini Flash, Gemini Pro',
-      weekly_remaining_pct: 92.16,
-      weekly_refresh: '165h 57m',
-      five_hour_remaining_pct: 70.22,
-      five_hour_refresh: '3h 58m'
+      weekly_remaining_pct: 100,
+      weekly_refresh: '168h 0m',
+      five_hour_remaining_pct: 100,
+      five_hour_refresh: '5h 0m'
     },
     claude_gpt: {
       models: 'Claude Opus, Claude Sonnet, GPT-OSS',
-      weekly_remaining_pct: 0.0,
-      weekly_refresh: '145h 42m',
-      five_hour_remaining_pct: 0.0,
-      five_hour_status: 'Weekly limit reached'
+      weekly_remaining_pct: 100,
+      weekly_refresh: '168h 0m',
+      five_hour_remaining_pct: 100,
+      five_hour_status: 'OK'
     },
     total_prompts: 0,
     last_prompt_time: null,
@@ -82,7 +73,7 @@ const DEFAULT_DATA = {
     prompt_tokens: 0,
     completion_tokens: 0,
     daily_quota_tokens: 180000,
-    daily_remaining_tokens: 174229,
+    daily_remaining_tokens: 180000,
     last_request_time: null,
     status: 'ONLINE'
   },
@@ -131,7 +122,7 @@ function syncQuotaToRender(data) {
 function saveQuotaData(data, shouldSync = true) {
   data.last_updated = new Date().toISOString();
   try {
-    atomicWriteFileSync(QUOTA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(QUOTA_FILE, JSON.stringify(data, null, 2), 'utf8');
     if (shouldSync) {
       syncQuotaToRender(data);
     }
@@ -140,159 +131,141 @@ function saveQuotaData(data, shouldSync = true) {
   }
 }
 
-function recordGroqUsage(usage = {}, headers = null, model = 'qwen/qwen3.8-27b', promptSnippet = '') {
-  const data = loadQuotaData();
-  data.groq.total_requests += 1;
-  data.groq.last_request_time = new Date().toISOString();
-  data.groq.model = model;
+// -----------------  helper to reduce duplication  -----------------
 
+function _applyUsageData(modifyFn) {
+  const data = loadQuotaData();
+  modifyFn(data);
+  saveQuotaData(data, true);
+  return data;
+}
+
+function _appendRecentEvent(data, engine, model, tokens, snippet) {
+  data.recent_events.unshift({
+    timestamp: new Date().toISOString(),
+    engine,
+    model,
+    tokens,
+    snippet: (snippet || '').substring(0, 50)
+  });
+  if (data.recent_events.length > 20) {
+    data.recent_events.pop();
+  }
+}
+
+// Shared token-accounting logic used by recordGroqUsage / recordGlmUsage / recordOkmdUsage
+function _computeTokenTotals(usage = {}) {
   const promptTokens = usage.prompt_tokens || 0;
   const compTokens = usage.completion_tokens || 0;
   const totTokens = usage.total_tokens || (promptTokens + compTokens);
+  return { promptTokens, compTokens, totTokens };
+}
 
-  data.groq.prompt_tokens += promptTokens;
-  data.groq.completion_tokens += compTokens;
-  data.groq.total_tokens += totTokens;
+function _accumulateEngineTokens(bucket, tokenTotals) {
+  bucket.prompt_tokens += tokenTotals.promptTokens;
+  bucket.completion_tokens += tokenTotals.compTokens;
+  bucket.total_tokens += tokenTotals.totTokens;
+}
 
-  const getHeader = (name) => {
-    if (!headers) return null;
-    if (typeof headers.get === 'function') return headers.get(name);
-    return headers[name.toLowerCase()] || headers[name];
-  };
+function _getHeader(headers, name) {
+  if (!headers) return null;
+  if (typeof headers.get === 'function') return headers.get(name);
+  return headers[name.toLowerCase()] || headers[name];
+}
 
-  const limitReq = getHeader('x-ratelimit-limit-requests');
-  const remReq = getHeader('x-ratelimit-remaining-requests');
-  const limitTok = getHeader('x-ratelimit-limit-tokens');
-  const remTok = getHeader('x-ratelimit-remaining-tokens');
-  const resetReq = getHeader('x-ratelimit-reset-requests');
-  const resetTok = getHeader('x-ratelimit-reset-tokens');
+// -----------------  record functions  -----------------
 
-  if (limitReq !== undefined && limitReq !== null) data.groq.rate_limit.limit_requests = parseInt(limitReq, 10) || data.groq.rate_limit.limit_requests;
-  if (remReq !== undefined && remReq !== null) data.groq.rate_limit.remaining_requests = parseInt(remReq, 10) || 0;
-  if (limitTok !== undefined && limitTok !== null) data.groq.rate_limit.limit_tokens = parseInt(limitTok, 10) || data.groq.rate_limit.limit_tokens;
-  if (remTok !== undefined && remTok !== null) data.groq.rate_limit.remaining_tokens = parseInt(remTok, 10) || 0;
-  if (resetReq) data.groq.rate_limit.reset_requests = resetReq;
-  if (resetTok) data.groq.rate_limit.reset_tokens = resetTok;
+function recordGroqUsage(usage = {}, headers = null, model = 'qwen/qwen3.8-27b', promptSnipppet = '') {
+  return _applyUsageData((data) => {
+    data.groq.total_requests += 1;
+    data.groq.last_request_time = new Date().toISOString();
+    data.groq.model = model;
 
-  data.recent_events.unshift({
-    timestamp: new Date().toISOString(),
-    engine: 'Groq',
-    model: model,
-    tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    const tokenTotals = _computeTokenTotals(usage);
+    _accumulateEngineTokens(data.groq, tokenTotals);
+
+    const limitReq = _getHeader(headers, 'x-ratelimit-limit-requests');
+    const remReq = _getHeader(headers, 'x-ratelimit-remaining-requests');
+    const limitTok = _getHeader(headers, 'x-ratelimit-limit-tokens');
+    const remTok = _getHeader(headers, 'x-ratelimit-remaining-tokens');
+    const resetReq = _getHeader(headers, 'x-ratelimit-reset-requests');
+    const resetTok = _getHeader(headers, 'x-ratelimit-reset-tokens');
+
+    if (limitReq !== undefined && limitReq !== null) data.groq.rate_limit.limit_requests = parseInt(limitReq, 10) || data.groq.rate_limit.limit_requests;
+    if (remReq !== undefined && remReq !== null) data.groq.rate_limit.remaining_requests = parseInt(remReq, 10) || 0;
+    if (limitTok !== undefined && limitTok !== null) data.groq.rate_limit.limit_tokens = parseInt(limitTok, 10) || data.groq.rate_limit.limit_tokens;
+    if (remTok !== undefined && remTok !== null) data.groq.rate_limit.remaining_tokens = parseInt(remTok, 10) || 0;
+    if (resetReq) data.groq.rate_limit.reset_requests = resetReq;
+    if (resetTok) data.groq.rate_limit.reset_tokens = resetTok;
+
+    _appendRecentEvent(data, 'Groq', model, tokenTotals.totTokens, promptSnipppet);
   });
-
-  if (data.recent_events.length > 20) data.recent_events.pop();
-
-  saveQuotaData(data, true);
-  return data;
 }
 
 function updateAgyQuota(quotaUpdate = {}) {
-  const data = loadQuotaData();
-  if (quotaUpdate.gemini) {
-    data.agy.gemini = Object.assign(data.agy.gemini, quotaUpdate.gemini);
-  }
-  if (quotaUpdate.claude_gpt) {
-    data.agy.claude_gpt = Object.assign(data.agy.claude_gpt, quotaUpdate.claude_gpt);
-  }
-  if (quotaUpdate.account) {
-    data.agy.account = quotaUpdate.account;
-  }
-  saveQuotaData(data, true);
-  return data;
+  return _applyUsageData((data) => {
+    if (quotaUpdate.gemini) {
+      data.agy.gemini = Object.assign(data.agy.gemini, quotaUpdate.gemini);
+    }
+    if (quotaUpdate.claude_gpt) {
+      data.agy.claude_gpt = Object.assign(data.agy.claude_gpt, quotaUpdate.claude_gpt);
+    }
+    if (quotaUpdate.account) {
+      data.agy.account = quotaUpdate.account;
+    }
+    // no event appended for quota update
+  });
 }
 
 function recordAgyUsage(promptText = '') {
-  const data = loadQuotaData();
-  data.agy.total_prompts += 1;
-  data.agy.last_prompt_time = new Date().toISOString();
-
-  data.recent_events.unshift({
-    timestamp: new Date().toISOString(),
-    engine: 'AGY CLI',
-    model: 'Antigravity Direct',
-    tokens: null,
-    snippet: (promptText || '').substring(0, 50)
+  return _applyUsageData((data) => {
+    data.agy.total_prompts += 1;
+    data.agy.last_prompt_time = new Date().toISOString();
+    _appendRecentEvent(data, 'AGY CLI', 'Antigravity Direct', null, promptText);
   });
-
-  if (data.recent_events.length > 20) data.recent_events.pop();
-
-  saveQuotaData(data, true);
-  return data;
 }
 
 function recordGlmUsage(usage = {}, promptSnippet = '') {
-  const data = loadQuotaData();
-  data.glm.total_requests += 1;
-  data.glm.last_request_time = new Date().toISOString();
+  return _applyUsageData((data) => {
+    data.glm.total_requests += 1;
+    data.glm.last_request_time = new Date().toISOString();
 
-  const promptTokens = usage.prompt_tokens || 0;
-  const compTokens = usage.completion_tokens || 0;
-  const totTokens = usage.total_tokens || (promptTokens + compTokens);
+    const tokenTotals = _computeTokenTotals(usage);
+    _accumulateEngineTokens(data.glm, tokenTotals);
 
-  data.glm.prompt_tokens += promptTokens;
-  data.glm.completion_tokens += compTokens;
-  data.glm.total_tokens += totTokens;
-
-  data.recent_events.unshift({
-    timestamp: new Date().toISOString(),
-    engine: 'GLM',
-    model: data.glm.model || 'glm-4-plus',
-    tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    _appendRecentEvent(data, 'GLM', data.glm.model || 'glm-4-plus', tokenTotals.totTokens, promptSnippet);
   });
-
-  if (data.recent_events.length > 20) data.recent_events.pop();
-
-  saveQuotaData(data, true);
-  return data;
 }
 
 function recordOkmdUsage(usage = {}, modelQuota = {}, model = 'deepseek-v4-pro', provider = 'Deepseek', promptSnippet = '') {
-  const data = loadQuotaData();
-  if (!data.okmd) {
-    data.okmd = {
-      model: model,
-      provider: provider,
-      total_requests: 0,
-      total_tokens: 0,
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      daily_quota_tokens: 180000,
-      daily_remaining_tokens: 180000,
-      last_request_time: null,
-      status: 'ONLINE'
-    };
-  }
-  data.okmd.total_requests += 1;
-  data.okmd.last_request_time = new Date().toISOString();
-  data.okmd.model = model;
-  data.okmd.provider = provider;
+  return _applyUsageData((data) => {
+    if (!data.okmd) {
+      data.okmd = {
+        model: model,
+        provider: provider,
+        total_requests: 0,
+        total_tokens: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        daily_quota_tokens: 180000,
+        daily_remaining_tokens: 180000,
+        last_request_time: null,
+        status: 'ONLINE'
+      };
+    }
+    data.okmd.total_requests += 1;
+    data.okmd.last_request_time = new Date().toISOString();
+    data.okmd.model = model;
+    data.okmd.provider = provider;
 
-  const promptTokens = usage.prompt_tokens || 0;
-  const compTokens = usage.completion_tokens || 0;
-  const totTokens = usage.total_tokens || (promptTokens + compTokens);
+    const tokenTotals = _computeTokenTotals(usage);
+    _accumulateEngineTokens(data.okmd, tokenTotals);
 
-  data.okmd.prompt_tokens += promptTokens;
-  data.okmd.completion_tokens += compTokens;
-  data.okmd.total_tokens += totTokens;
+    if (modelQuota.daily_quota_tokens) data.okmd.daily_quota_tokens = modelQuota.daily_quota_tokens;
+    if (modelQuota.daily_remaining_tokens !== undefined) data.okmd.daily_remaining_tokens = modelQuota.daily_remaining_tokens;
 
-  if (modelQuota.daily_quota_tokens) data.okmd.daily_quota_tokens = modelQuota.daily_quota_tokens;
-  if (modelQuota.daily_remaining_tokens !== undefined) data.okmd.daily_remaining_tokens = modelQuota.daily_remaining_tokens;
-
-  data.recent_events.unshift({
-    timestamp: new Date().toISOString(),
-    engine: 'OKMD',
-    model: model,
-    tokens: totTokens,
-    snippet: (promptSnippet || '').substring(0, 50)
+    _appendRecentEvent(data, 'OKMD', model, tokenTotals.totTokens, promptSnippet);
   });
-
-  if (data.recent_events.length > 20) data.recent_events.pop();
-
-  saveQuotaData(data, true);
-  return data;
 }
 
 function formatUsageForTelegram() {
@@ -303,12 +276,12 @@ function formatUsageForTelegram() {
   const agy = data.agy || {};
   const gem = agy.gemini || {};
   const cg = agy.claude_gpt || {};
-  
+
   const tokPct = rl.limit_tokens ? Math.round((rl.remaining_tokens / rl.limit_tokens) * 100) : 100;
 
-  const gemWeek = gem.weekly_remaining_pct !== undefined ? gem.weekly_remaining_pct : 81.08;
-  const gemFive = gem.five_hour_remaining_pct !== undefined ? gem.five_hour_remaining_pct : 0.00;
-  const cgWeek = cg.weekly_remaining_pct !== undefined ? cg.weekly_remaining_pct : 0.00;
+  const gemWeek = gem.weekly_remaining_pct !== undefined ? gem.weekly_remaining_pct : 100;
+  const gemFive = gem.five_hour_remaining_pct !== undefined ? gem.five_hour_remaining_pct : 100;
+  const cgWeek = cg.weekly_remaining_pct !== undefined ? cg.weekly_remaining_pct : 100;
 
   const okmdRemaining = okmd.daily_remaining_tokens !== undefined ? okmd.daily_remaining_tokens : 180000;
   const okmdTotal = okmd.daily_quota_tokens || 180000;
@@ -318,7 +291,7 @@ function formatUsageForTelegram() {
     '⚡ <b>AI QUOTA & RATE LIMIT STATUS</b>',
     '━━━━━━━━━━━━━━━━━━━━',
     '👑 <b>OKMD Playground API (Primary Engine)</b>',
-    '• <b>โมเดลหลัก:</b> <code>' + (okmd.model || 'deepseek-v4-pro') + '</code> (' + (okmd.provider || 'Deepseek') + ')',
+    '• <b>โมเดลหลัก:</b> <code>' + (okmd.model || 'claude-sonnet-5') + '</code> (' + (okmd.provider || 'Claude') + ')',
     '• <b>Tokens คงเหลือวันนี้:</b> <b>' + okmdRemaining.toLocaleString() + ' / ' + okmdTotal.toLocaleString() + '</b> (' + okmdPct + '%)',
     '• <b>เรียกใช้สะสม:</b> ' + (okmd.total_requests || 0) + ' ครั้ง (' + (okmd.total_tokens || 0).toLocaleString() + ' tok)',
     '• <b>สถานะ:</b> 🟢 ' + (okmd.status || 'ONLINE (Active)'),
@@ -326,10 +299,10 @@ function formatUsageForTelegram() {
     '🚀 <b>Google Antigravity CLI (AGY)</b>',
     '• <b>บัญชี:</b> <code>' + (agy.account || 'aiwonsi@gmail.com') + '</code>',
     '• <b>Gemini (Flash / Pro):</b>',
-    '  └ สัปดาห์: <b>' + gemWeek + '%</b> (' + (gem.weekly_refresh || '162h 59m') + ')',
-    '  └ 5 ชั่วโมง: <b>' + gemFive + '%</b> (' + (gem.five_hour_refresh || '1h 0m') + ')',
+    '  └ สัปดาห์: <b>' + formatPct(gemWeek) + '</b> (' + (gem.weekly_refresh || '168h 0m') + ')',
+    '  └ 5 ชั่วโมง: <b>' + formatPct(gemFive) + '</b> (' + (gem.five_hour_refresh || '5h 0m') + ')',
     '• <b>Claude / GPT (Sonnet/Opus):</b>',
-    '  └ สัปดาห์: <b>' + cgWeek + '%</b> (รีเฟรช ' + (cg.weekly_refresh || '142h 44m') + ')',
+    '  └ สัปดาห์: <b>' + formatPct(cgWeek) + '</b> (รีเฟรช ' + (cg.weekly_refresh || '168h 0m') + ')',
     '• <b>เรียกใช้สะสม:</b> ' + (agy.total_prompts || 0) + ' ครั้ง',
     '',
     '🤖 <b>Groq Fast API (Auto-Failover)</b>',
@@ -350,5 +323,6 @@ module.exports = {
   recordGlmUsage,
   recordOkmdUsage,
   formatUsageForTelegram,
+  formatPct,
   QUOTA_FILE
 };

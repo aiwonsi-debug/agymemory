@@ -4,23 +4,6 @@ const { calculateTransitLoss } = require('./psc_core_logic.js');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-
-// Atomic write helper (Fix C-06, H-14)
-function atomicWriteFileSync(filePath, data, encoding) {
-    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-        if (encoding) {
-            fs.writeFileSync(tmpFile, data, encoding);
-        } else {
-            fs.writeFileSync(tmpFile, data);
-        }
-        fs.renameSync(tmpFile, filePath);
-    } catch (e) {
-        try { if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (err) {}
-        throw e;
-    }
-}
-
 const { exec, spawn } = require('child_process');
 const memoryEngine = require('./memory_engine.js');
 const quotaTracker = require('./ai_quota_tracker.js');
@@ -111,7 +94,9 @@ function backupStockSnapshot(stockObj) {
         const todayStr = new Date().toISOString().slice(0, 10);
         const dailyBackupFile = path.join(backupDir, `stock_inventory_${todayStr}.json`);
         
-        atomicWriteFileSync(dailyBackupFile, JSON.stringify(stockObj, null, 2), 'utf8');
+        const tmpDaily = `${dailyBackupFile}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmpDaily, JSON.stringify(stockObj, null, 2), 'utf8');
+        fs.renameSync(tmpDaily, dailyBackupFile);
 
         const backups = fs.readdirSync(backupDir)
             .filter(f => f.startsWith('stock_inventory_') && f.endsWith('.json'))
@@ -671,7 +656,7 @@ function handleCallbackQuery(cq) {
     else if (data === 'dash_toggle_engine') {
         currentAiEngine = (currentAiEngine === 'agy') ? 'glm' : 'agy';
         config.DefaultEngine = currentAiEngine;
-        try { atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
+        try { fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8'); } catch(e) {}
         
         answerCallbackQuery(cqId, `✅ สลับ AI Engine เป็น ${currentAiEngine.toUpperCase()} เรียบร้อยแล้ว!`, true);
         editMessageText(chatId, messageId, getDashboardSummary(), getDashboardInlineMarkup());
@@ -744,7 +729,7 @@ async function pollUpdates() {
         if (res && res.ok && Array.isArray(res.result)) {
             for (const upd of res.result) {
                 lastUpdateId = upd.update_id;
-                try { atomicWriteFileSync(updateIdFile, String(lastUpdateId), 'utf8'); } catch (e) {}
+                try { fs.writeFileSync(updateIdFile, String(lastUpdateId), 'utf8'); } catch (e) {}
                 
                 // Handle Inline Keyboard Button Taps
                 if (upd.callback_query) {
@@ -787,7 +772,7 @@ async function pollUpdates() {
                                     saveTargets.forEach(st => {
                                         try {
                                             fs.mkdirSync(path.dirname(st), { recursive: true });
-                                            atomicWriteFileSync(st, buf);
+                                            fs.writeFileSync(st, buf);
                                         } catch(e) {}
                                     });
                                     sendMessage(chatId, `✅ บันทึกไฟล์ ${docName} เข้าพื้นที่ทำงานเรียบร้อยแล้ว!\nระบบทำการอัปเดตตารางคำสั่งซื้อและกำหนดการแจ้งเตือนสดให้ทันทีครับ 🚀`);
@@ -809,6 +794,7 @@ async function pollUpdates() {
                 
                 writeLog(`[TG Message] From ${name} (${chatId}): ${text}`);
                 
+                // Fix C-01: Removed dynamic admin promotion
                 handleCommand(chatId, text, msg);
             }
         }
@@ -837,6 +823,9 @@ function getOkmdApiKey() {
             try { key = fs.readFileSync(keyFile, 'utf8').trim(); } catch(e){}
         }
     }
+    if (!key) {
+        key = 'REDACTED';
+    }
     return key;
 }
 
@@ -864,7 +853,9 @@ async function runOkmdEngine(chatId, promptText, customModel = null) {
                          'คุณต้องปฏิบัติตามกฎเกณฑ์ต่อไปนี้อย่างเคร่งครัด:\n' +
                          '1. ตอบเป็นภาษาไทยอย่างสุภาพ กระชับ ชัดเจน และเป็นมืออาชีพ (ใช้การ์ดข้อความและ Emoji เพื่อให้อ่านง่ายบนมือถือ)\n' +
                          '2. ยึดมั่นในนโยบาย Zero Hallucination: ตัวเลขยอดสั่งซื้อ, วันที่ส่งมอบ, สต็อก, Yield และค่ารถ ต้องอ้างอิงจากข้อมูลที่มีในระบบเท่านั้น หากไม่มีให้ตอบว่า "ไม่พบข้อมูลในเอกสารล่าสุด" ห้ามคิดตัวเลขขึ้นเอง\n' +
-                         '3. หากผู้ใช้ถามเรื่องงานทั่วไป ให้ตอบและช่วยเหลืออย่างชาญฉลาดและตรงประเด็น';
+                         '3. หากผู้ใช้ถามเรื่องงานทั่วไป ให้ตอบและช่วยเหลืออย่างชาญฉลาดและตรงประเด็น\n' +
+                         '4. ห้ามใช้ตาราง Markdown แบบหลายคอลัมน์แนวนอน เพราะจะล้นจอมือถือ ให้ใช้รูปแบบการ์ดสั้น มี Emoji นำหน้า และแบ่งวรรคด้วยเส้นคั่น ──────────────────\n' +
+                         '5. ทุกครั้งที่ตอบเรื่องตัวเลข ให้ระบุชื่อไฟล์อ้างอิงและรอบ Rev. ประกอบเสมอ';
 
     const postData = JSON.stringify({
         model: modelToUse,
@@ -873,7 +864,7 @@ async function runOkmdEngine(chatId, promptText, customModel = null) {
             { role: 'user', content: fullContextPrompt }
         ],
         temperature: 0.6,
-        max_tokens: 300
+        max_tokens: 700
     });
 
     try {
@@ -1018,7 +1009,7 @@ async function runGroqFallback(chatId, promptText, failReason = 'AGY CLI Quota R
             { role: 'user', content: promptText }
         ],
         temperature: 0.7,
-        max_tokens: 300
+        max_tokens: 500
     });
 
     try {
@@ -1093,18 +1084,15 @@ function runAgyCli(chatId, promptText) {
     let timedOut = false;
     
     // Spawn with FULL REASONING (No effort limitation) and Full Tool Permissions
-    const child = spawn(agyExe, ['--continue'], {
+    const child = spawn(agyExe, ['--continue', '-p', fullPrompt], {
         cwd: 'E:\\รวมงาน\\งาน 25-26',
         windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: Object.assign({}, process.env, {
             PATH: `C:\\Users\\624\\AppData\\Local\\agy\\bin;C:\\Users\\624\\tools\\nodejs;${process.env.PATH}`
         })
     });
     
-    child.stdin.write(fullPrompt);
-    child.stdin.end();
-
     let stdoutData = '';
     let stderrData = '';
     
@@ -1335,7 +1323,7 @@ function runGlm(chatId, promptText) {
     
     const isLocal = glmConfig.BaseUrl && (glmConfig.BaseUrl.includes('localhost') || glmConfig.BaseUrl.includes('127.0.0.1'));
     if (!glmConfig.ApiKey && !isLocal) {
-        sendMessage(chatId, `[GLM AI Engine]\nยังไม่ได้ตั้งค่า API Key สำหรับ GLM\n\n⛔ เพื่อความปลอดภัย กรุณาตั้งค่า API Key ในไฟล์คอนฟิก (glm_config.json) หรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง\n\n(หากใช้ Local Open Weights ให้ตั้ง URL ด้วย /set_glm_url http://localhost:11434/v1)`);
+        sendMessage(chatId, `[GLM AI Engine]\nยังไม่ได้ตั้งค่า API Key สำหรับ GLM\n\nสามารถตั้งค่าโดยพิมพ์:\n/set_glm_key <API_KEY_ของคุณ>\n\n(หากใช้ Local Open Weights ให้ตั้ง URL ด้วย /set_glm_url http://localhost:11434/v1)`);
         return;
     }
     
@@ -1345,7 +1333,6 @@ function runGlm(chatId, promptText) {
         model: glmConfig.Model || 'glm-5.3-flash',
         messages: [{ role: 'user', content: promptText }],
         temperature: glmConfig.Temperature || 0.7
-        , max_tokens: 300
     });
     
     try {
@@ -1395,8 +1382,16 @@ function runGlm(chatId, promptText) {
     }
 }
 
-function handleModelSwitching(chatId, text, lower, msg) {
-
+function handleCommand(chatId, text, msg = null) {
+    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
+    if (!ALLOWED_ADMINS.includes(chatId.toString())) {
+        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
+        return;
+    }
+    const lower = text.toLowerCase();
+    
+    // /model command to switch between OKMD, GLM and AGY CLI
+    if (lower === '/model' || lower.startsWith('/model ')) {
         const parts = text.trim().split(/\s+/);
         const targetModel = parts[1] ? parts[1].toLowerCase() : '';
         const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
@@ -1433,7 +1428,7 @@ function handleModelSwitching(chatId, text, lower, msg) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('flash') ? 'deepseek-v4-flash' : 'deepseek-v4-pro';
             OKMD_CONFIG.Provider = 'Deepseek';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OKMD (${OKMD_CONFIG.Model})\nพร้อมตอบคำถามทันใจและจำกฎธุรกิจทั้งหมดแล้วครับ! ✨`);
             return;
         }
@@ -1443,7 +1438,7 @@ function handleModelSwitching(chatId, text, lower, msg) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('4.6') ? 'claude-sonnet-4.6' : 'claude-sonnet-5';
             OKMD_CONFIG.Provider = 'Claude';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Claude (${OKMD_CONFIG.Model})\nภาษาไทยเนียนระดับพรีเมียม พร้อมทำงานทันทีครับ! 🌸`);
             return;
         }
@@ -1453,7 +1448,7 @@ function handleModelSwitching(chatId, text, lower, msg) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('mini') ? 'gpt-5.4-mini' : 'gpt-5.4';
             OKMD_CONFIG.Provider = 'OpenAI';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 OpenAI (${OKMD_CONFIG.Model})\nพร้อมประมวลผลคำสั่งแล้วครับ! ⚡`);
             return;
         }
@@ -1463,7 +1458,7 @@ function handleModelSwitching(chatId, text, lower, msg) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = targetModel.includes('3.7') ? 'gemini-3.7-flash' : 'gemini-2.5-flash-lite';
             OKMD_CONFIG.Provider = 'Gemini';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Google Gemini (${OKMD_CONFIG.Model})\nความเร็วสูงพิเศษ พร้อมทำงานแล้วครับ! 🚀`);
             return;
         }
@@ -1473,7 +1468,7 @@ function handleModelSwitching(chatId, text, lower, msg) {
             config.DefaultEngine = 'okmd';
             OKMD_CONFIG.Model = 'qwen3.7-plus';
             OKMD_CONFIG.Provider = 'Qwen';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลหลักเป็น: 👑 Qwen (${OKMD_CONFIG.Model})\nพร้อมคำนวณและวิเคราะห์ลอจิกแล้วครับ! 🧮`);
             return;
         }
@@ -1490,9 +1485,9 @@ function handleModelSwitching(chatId, text, lower, msg) {
                 } else {
                     glmConfig.Model = targetModel;
                 }
-                atomicWriteFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
+                fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
             }
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลเริ่มต้นเป็น: GLM (${glmConfig.Model || 'glm-5.3-flash'})\nพิมพ์ข้อความหรือคำสั่งได้โดยตรง ระบบจะส่งให้ GLM ประมวลผล`);
             return;
         }
@@ -1501,18 +1496,17 @@ function handleModelSwitching(chatId, text, lower, msg) {
         if (targetModel === 'agy' || targetModel === 'antigravity') {
             currentAiEngine = 'agy';
             config.DefaultEngine = 'agy';
-            atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
             sendMessage(chatId, `✅ สลับโมเดลเริ่มต้นเป็น: AGY CLI (Google Antigravity)\nพิมพ์ข้อความหรือคำสั่งได้โดยตรง ระบบจะส่งให้ AGY CLI ประมวลผล`);
             return;
         }
 
         sendMessage(chatId, `ไม่รู้จักโมเดล "${targetModel}"\nพิมพ์ /model เพื่อดูรายชื่อโมเดลทั้งหมดที่รองรับครับ`);
         return;
+    }
 
-}
-
-function handleSetGlmUrl(chatId, text, lower, msg) {
-
+    // Set GLM Base URL (for Local Open Weights or Cloud API)
+    if (lower.startsWith('/set_glm_url ') || lower.startsWith('/glm_url ')) {
         const url = text.substring(text.indexOf(' ') + 1).trim();
         const glmCfgPath = path.join(agyBaseDir, 'glm_config.json');
         let glmConfig = { Enabled: true, ApiKey: '', BaseUrl: url, Model: 'glm-5.3-flash' };
@@ -1520,29 +1514,26 @@ function handleSetGlmUrl(chatId, text, lower, msg) {
             try { glmConfig = JSON.parse(fs.readFileSync(glmCfgPath, 'utf8').replace(/^\uFEFF/, '')); } catch(e){}
         }
         glmConfig.BaseUrl = url;
-        atomicWriteFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
+        fs.writeFileSync(glmCfgPath, JSON.stringify(glmConfig, null, 2), 'utf8');
         sendMessage(chatId, `[GLM Config]\nบันทึก Base URL เรียบร้อยแล้ว: ${url}\nโมเดล: ${glmConfig.Model}`);
         return;
+    }
 
-}
-
-function handleSetGlmKey(chatId, text, lower, msg) {
-
+    // Set GLM API Key command - DISABLED (Fix H-12)
+    if (lower.startsWith('/set_glm_key ') || lower.startsWith('/glm_key ')) {
         sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่า API Key ในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง (Fix H-12)');
         return;
+    }
     
-}
-
-function handleGlmExplicit(chatId, text, lower, msg) {
-
+    // Explicit GLM command
+    if (lower.startsWith('/glm ') || lower.startsWith('/chatglm ')) {
         const prompt = text.substring(text.indexOf(' ') + 1).trim();
         runGlm(chatId, prompt);
         return;
+    }
     
-}
-
-function handleFileRequest(chatId, text, lower, msg) {
-
+    // 0. Smart File Request / Download Handler
+    if (lower.startsWith('ขอไฟล์') || lower.startsWith('ส่งไฟล์') || lower.startsWith('/file') || lower.startsWith('download') || lower.includes('ขอไฟล์') || lower.includes('ส่งไฟล์')) {
         let query = text.replace(/^(ขอไฟล์|ส่งไฟล์|\/file|download)\s*/i, '').trim();
         if (query.toLowerCase().includes('master') || query.toLowerCase().includes('มาสเตอร์') || query.includes('ออเดอร์')) {
             const masterExcel = 'E:\\รวมงาน\\งาน 25-26\\Master_Order_Schedule_2026.xlsx';
@@ -1554,6 +1545,7 @@ function handleFileRequest(chatId, text, lower, msg) {
         }
         
         sendMessage(chatId, `🔍 กำลังค้นหาไฟล์ "${query || 'ที่ต้องการ'}" ในระบบ...`);
+        // Fix H-04: Confine file scanning to business docs folder only
         const searchRoots = ['E:\\รวมงาน\\งาน 25-26'];
         const foundFiles = [];
         
@@ -1601,25 +1593,21 @@ function handleFileRequest(chatId, text, lower, msg) {
             sendMessage(chatId, `❌ ไม่พบไฟล์ที่ตรงกับคำค้น "${query}" ในระบบ`);
             return;
         }
+    }
 
-}
-
-function handleTerminalCommand(chatId, text, lower, msg) {
-
+    // 1. Direct Terminal Shell Command execution (/cmd or /sh)
+    if (lower.startsWith('/cmd ') || lower.startsWith('/sh ') || lower.startsWith('/ps ')) {
         sendMessage(chatId, '⛔ ฟังก์ชันการรันคำสั่ง Shell ถูกปิดใช้งานถาวรเพื่อความปลอดภัยของระบบ (Fix C-02)');
         return;
+    }
     
-}
-
-function handleAgyCliPrompt(chatId, text, lower, msg) {
-
+    // 2. Explicit AGY CLI command (/agy or /ai) - Optional since AGY is default direct handler
+    if (lower === '/agy' || lower === '/ai') {
         sendMessage(chatId, `🤖 [Google Antigravity CLI พร้อมใช้งาน]\n\nคุณสามารถพิมพ์ข้อความสั่งงานได้โดยตรงทันทีโดยไม่ต้องใส่ /agy นำหน้าครับ! ✨`);
         return;
+    }
     
-}
-
-function handleMiniAppDashboard(chatId, text, lower, msg) {
-
+      if (lower === '/miniapp' || lower === '/app' || lower === 'miniapp' || lower === '/dashboard') {
           const replyMarkup = {
               inline_keyboard: [[
                   { text: '📊 เปิด AGY Dashboard (Mini App)', web_app: { url: 'https://pscdb.onrender.com' } }
@@ -1627,11 +1615,9 @@ function handleMiniAppDashboard(chatId, text, lower, msg) {
           };
           sendMessage(chatId, 'คลิกปุ่มด้านล่างเพื่อเปิดหน้าต่าง Mini App ของระบบฐานข้อมูล:', replyMarkup);
           return;
+      }
 
-}
-
-function handleAgyCustomizations(chatId, text, lower, msg) {
-
+      if (lower === '/agy-customizations' || lower === '/customization') {
         const reply = `🛠️ [Google Antigravity Customization System]\n\n` +
                       `ระบบปรับแต่ง Antigravity (AGY) ช่วยเสริมประสิทธิภาพการทำงานเฉพาะด้าน:\n\n` +
                       `1. 📜 **Rules (กฎของโปรเจกต์):** ไฟล์ GEMINI.md, AGENTS.md สำหรับกำหนดสไตล์และข้อกำหนดการทำงาน\n` +
@@ -1642,19 +1628,29 @@ function handleAgyCustomizations(chatId, text, lower, msg) {
                       `💡 พิมพ์ข้อความในแชทนี้ได้โดยตรง ระบบจะส่งให้ AGY CLI ประมวลผลทันที`;
         sendMessage(chatId, reply);
         return;
-
-}
-
-function handleAgyExplicit(chatId, text, lower, msg) {
-
+    }
+    if (lower.startsWith('/agy ') || lower.startsWith('/ai ')) {
         const prompt = text.substring(text.indexOf(' ') + 1).trim();
         runAgyCli(chatId, prompt);
         return;
+    }
     
-}
+    // 2.9 Field Ops Loading Report Auto-Parser & Dashboard Sync
+    const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
 
-function handleStockAndOpsIngest(chatId, text, lower, msg) {
+    // =========================================================================
+    // 🌟 UNIFIED AI PARSER (STOCK, INTAKE, LOADING & YIELD IN A SINGLE ENGINE)
+    // =========================================================================
+    const isOpsOrStockPattern = !hasNegation && (
+        text.includes('สต็อก') || text.includes('สต๊อก') || text.toLowerCase().includes('stock') ||
+        text.includes('ขึ้นของ') || text.includes('รับเข้า') || text.includes('ขึ้นกะหล่ำ') ||
+        text.includes('ขึ้นหอม') || text.includes('กะหล่ำเข้า') || text.includes('หอมเข้า') ||
+        text.includes('สุ่มปอก') || text.includes('ปอกได้') || text.includes('จำนวนที่ได้รับ') ||
+        text.includes('น้ำหนักสุทธิ') || text.includes('เก็บปลายทาง') || text.includes('ค่ารถ') ||
+        text.includes('ราคา') || (text.includes('กก.') && (text.includes('บ.') || text.includes('บาท')))
+    );
 
+    if (isOpsOrStockPattern) {
         sendMessage(chatId, '🔄 [AI Unified Engine]: กำลังวิเคราะห์และอัปเดตระบบแบบครบวงจร...');
         sendChatAction(chatId, 'typing');
 
@@ -1692,8 +1688,7 @@ function handleStockAndOpsIngest(chatId, text, lower, msg) {
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: text }
-            ],
-            max_tokens: 300
+            ]
         });
 
         const urlObj = require('url').parse(GROQ_CONFIG.Url);
@@ -1839,12 +1834,16 @@ function handleStockAndOpsIngest(chatId, text, lower, msg) {
                         if (result.date) stock.AsOfDate = result.date;
                         
                         // Atomic Write with tmp file and renameSync (AUD-02)
-                        atomicWriteFileSync(stockPath, JSON.stringify(stock, null, 2), 'utf8');
+                        const tmpStockPath = `${stockPath}.${process.pid}.${Date.now()}.tmp`;
+                        fs.writeFileSync(tmpStockPath, JSON.stringify(stock, null, 2), 'utf8');
+                        fs.renameSync(tmpStockPath, stockPath);
                         backupStockSnapshot(stock);
                         
                         try {
                             const renderStockPath = path.join(agyBaseDir, 'render-dashboard', 'stock_inventory.json');
-                            atomicWriteFileSync(renderStockPath, JSON.stringify(stock, null, 2), 'utf8');
+                            const tmpRenderPath = `${renderStockPath}.${process.pid}.${Date.now()}.tmp`;
+                            fs.writeFileSync(tmpRenderPath, JSON.stringify(stock, null, 2), 'utf8');
+                            fs.renameSync(tmpRenderPath, renderStockPath);
                         } catch(e){}
                         
                         if (stockUpdated) {
@@ -1872,17 +1871,18 @@ function handleStockAndOpsIngest(chatId, text, lower, msg) {
 
                     if (isIntakeOrLoading) {
                         let cardId = 'salaya_0309';
+                        const rawTextLower = text.toLowerCase();
                         const dateStr = result.date || '';
-                        const cardRules = [
-                            { match: text.includes('หอมแดง'), id: (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709' },
-                            { match: text.includes('พริก'), id: 'tns_pepper_1609' },
-                            { match: dateStr.includes('07') || dateStr.includes('08'), id: 'salaya_0809' },
-                            { match: dateStr.includes('01') || dateStr.includes('02'), id: 'salaya_0209' },
-                            { match: dateStr.includes('03'), id: 'salaya_0309' }
-                        ];
-                        const matchedRule = cardRules.find(r => r.match);
-                        if (matchedRule) {
-                            cardId = matchedRule.id;
+                        if (text.includes('หอมแดง')) {
+                            cardId = (dateStr.includes('21') || dateStr.includes('20')) ? 'tns_shallot_2109' : 'tns_shallot_0709';
+                        } else if (text.includes('พริก')) {
+                            cardId = 'tns_pepper_1609';
+                        } else if (dateStr.includes('07') || dateStr.includes('08')) {
+                            cardId = 'salaya_0809';
+                        } else if (dateStr.includes('01') || dateStr.includes('02')) {
+                            cardId = 'salaya_0209';
+                        } else if (dateStr.includes('03')) {
+                            cardId = 'salaya_0309';
                         }
 
                         const weightFormatted = result.weight_kg ? (result.weight_kg.toLocaleString() + ' kg') : '';
@@ -1924,8 +1924,8 @@ function handleStockAndOpsIngest(chatId, text, lower, msg) {
                                         SampleTest: { sampleKg: result.sample_kg || 100, peeledKg: result.peeled_kg || 0, actualYield: (calcYield ? calcYield/100 : null) },
                                         Notes: text
                                     });
-                                    atomicWriteFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
-                                    try { atomicWriteFileSync(path.join(agyBaseDir, 'render-dashboard', 'cabbage_prices_transport.json'), JSON.stringify(cp, null, 2), 'utf8'); } catch(e){}
+                                    fs.writeFileSync(cpPath, JSON.stringify(cp, null, 2), 'utf8');
+                                    try { fs.writeFileSync(path.join(agyBaseDir, 'render-dashboard', 'cabbage_prices_transport.json'), JSON.stringify(cp, null, 2), 'utf8'); } catch(e){}
                                 }
                             } catch(e){}
                         }
@@ -1974,11 +1974,10 @@ function handleStockAndOpsIngest(chatId, text, lower, msg) {
         req.write(postData);
         req.end();
         return;
+    }
 
-}
-
-function handleGroundTruthVerify(chatId, text, lower, msg) {
-
+    // 3.0 Anti-Hallucination Ground-Truth Verification Command
+    if (lower === '/verify' || lower.startsWith('/verify ') || lower === '🔍 ตรวจสอบความถูกต้อง' || lower.startsWith('ตรวจข้อมูล')) {
         const query = text.replace(/^(\/verify|ตรวจข้อมูล|🔍 ตรวจสอบความถูกต้อง)\s*/i, '').trim();
         const gtv = require('./ground_truth_validator.js');
         const records = query ? gtv.queryGroundTruth(query, query, query) : gtv.loadGroundTruth();
@@ -1997,11 +1996,10 @@ function handleGroundTruthVerify(chatId, text, lower, msg) {
         }
         sendMessage(chatId, rep);
         return;
+    }
 
-}
-
-function handleExcelIntegrityAudit(chatId, text, lower, msg) {
-
+    // 3.0.1 Automated Excel Integrity & Self-Reconciliation Audit Command
+    if (lower === '/audit' || lower === '/integrity' || lower === '🔍 ตรวจสอบความถูกต้องไฟล์' || lower === 'audit') {
         const engine = require('./excel_integrity_engine.js');
         const targetFile = 'E:\\รวมงาน\\งาน 25-26\\TNS\\PO\\2026\\SEP Order PSC.xlsx';
         try {
@@ -2019,11 +2017,10 @@ function handleExcelIntegrityAudit(chatId, text, lower, msg) {
             sendMessage(chatId, `❌ เกิดข้อผิดพลาดในการตรวจสอบ Integrity: ${e.message}`);
         }
         return;
+    }
 
-}
-
-function handleFieldOpsStatus(chatId, text, lower, msg) {
-
+    // 3.0.2 Live Field Ops & Purchasing Status Command (/ops or /team)
+    if (lower === '/ops' || lower === '/team' || lower === '🚜 สถานะจัดซื้อ' || lower.includes('สถานะจัดซื้อ') || lower.includes('สถานะทีมงาน') || lower.includes('สวนไหนบ้าง') || lower.includes('รถของใคร')) {
         const { loadTeamOps, WEBHOOK_PORT } = require('./webhook_server.js');
         const ops = loadTeamOps();
         let rep = `🚜 <b>[รายงานสถานะจัดซื้อ & ขนส่งภาคสนาม (Real-Time)]</b>\n`;
@@ -2047,11 +2044,12 @@ function handleFieldOpsStatus(chatId, text, lower, msg) {
         rep += `🌐 <i>เว็บแอปทีมงานบันทึกงาน: http://localhost:${WEBHOOK_PORT}/ops</i>`;
         sendMessage(chatId, rep);
         return;
+    }
+
+        // 3.0.3 Real-Time AI Usage & Quota Command (/usage, /quota)
     
-}
-
-function handleSetAiQuota(chatId, text, lower, msg) {
-
+    // Approach 2: Direct Command to update AI Quota from Telegram
+    if (lower.startsWith('/setquota') || lower.startsWith('/updatequota')) {
         const parts = text.trim().split(/\s+/);
         // Usage: /setquota <weekly_pct> <five_hour_pct> [5h_refresh]
         // Example: /setquota 81.08 0 1h
@@ -2068,9 +2066,10 @@ function handleSetAiQuota(chatId, text, lower, msg) {
                 }
             });
 
+            const formatPct = quotaTracker.formatPct || (v => Number(v).toFixed(2) + '%');
             const reply = '✅ <b>[อัปเดตโควต้า AGY สำเร็จ & ซิงค์ขึ้นคลาวด์แล้ว]</b>\n\n' +
-                          '• Gemini Weekly: <b>' + weekVal + '%</b>\n' +
-                          '• Gemini 5-Hour: <b>' + fiveVal + '%</b> (รีเฟรชใน ' + fiveRef + ')\n\n' +
+                          '• Gemini Weekly: <b>' + formatPct(weekVal) + '</b>\n' +
+                          '• Gemini 5-Hour: <b>' + formatPct(fiveVal) + '</b> (รีเฟรชใน ' + fiveRef + ')\n\n' +
                           '📱 <i>ข้อมูลอัปเดตตรงเข้า Mini App เรียบร้อยแล้วค่ะ</i>';
             sendMessageWithKeyboard(chatId, reply, getDashboardInlineMarkup());
             return;
@@ -2082,27 +2081,21 @@ function handleSetAiQuota(chatId, text, lower, msg) {
             sendMessage(chatId, guide);
             return;
         }
+    }
 
-}
-
-function handleAiQuotaUsage(chatId, text, lower, msg) {
-
+    if (lower === '/usage' || lower === '/quota' || lower === '⚡ ai quota' || lower === 'quota' || lower === 'usage' || lower === 'โควต้า') {
         const usageText = quotaTracker.formatUsageForTelegram();
         sendMessageWithKeyboard(chatId, usageText, getDashboardInlineMarkup());
         return;
+    }
 
-}
-
-function handleMemoryQuery(chatId, text, lower, msg) {
-
+    // 3.1 Memory & Continuous Learning Commands
+    if (lower === '/memory' || lower === '🧠 ความจำเลขา' || lower === 'ความจำ' || lower === 'จำอะไรได้บ้าง' || lower === '/knowledge') {
         const memText = memoryEngine.formatMemoryForTelegram();
         sendMessageWithKeyboard(chatId, memText, getDashboardInlineMarkup());
         return;
-
-}
-
-function handleMemoryRemember(chatId, text, lower, msg) {
-
+    }
+    if (lower.startsWith('จำว่า ') || lower.startsWith('จำไว้ว่า ') || lower.startsWith('ช่วยจำว่า ') || lower.startsWith('/remember ') || lower.startsWith('บันทึกว่า ')) {
         const fact = text.replace(/^(จำว่า|จำไว้ว่า|ช่วยจำว่า|\/remember|บันทึกว่า)\s*/i, '').trim();
         if (fact.length > 0) {
             const isRule = fact.includes('ห้าม') || fact.includes('ต้อง') || fact.includes('ทุกวัน') || fact.includes('กำหนด');
@@ -2110,11 +2103,8 @@ function handleMemoryRemember(chatId, text, lower, msg) {
             sendMessage(chatId, `🧠 [บันทึกเข้าความจำเลขาสำเร็จ!]\n\n• "${fact}"\n\nระบบได้อัปเดตไฟล์ความจำและ GEMINI.md พร้อมใช้งานในการตอบคำถามครั้งต่อไปทันทีครับ ✨`);
             return;
         }
-
-}
-
-function handleMemoryForget(chatId, text, lower, msg) {
-
+    }
+    if (lower.startsWith('/forget ') || lower.startsWith('ลืมว่า ') || lower.startsWith('ลบความจำ ')) {
         const query = text.replace(/^(\/forget|ลืมว่า|ลบความจำ)\s*/i, '').trim();
         const res = memoryEngine.forgetItem(query);
         if (res.ok) {
@@ -2123,31 +2113,27 @@ function handleMemoryForget(chatId, text, lower, msg) {
             sendMessage(chatId, `⚠️ ไม่พบรายการความจำที่ตรงกับ "${query}"\nพิมพ์ 🧠 ความจำเลขา เพื่อดูลำดับและรายการทั้งหมดครับ`);
         }
         return;
+    }
+
+    // 3.2 Fast Dashboard & Menu Shortcuts
     
-}
-
-function handleSystemReboot(chatId, text, lower, msg) {
-
+    // Reboot / Restart Command directly from Telegram
+    if (lower === '/reboot' || lower === '/restart' || lower === 'รีบูต' || lower === 'รีสตาร์ต' || lower === 'รีเซ็ตบอท') {
         sendMessage(chatId, '🔄 <b>[กำลังรีสตาร์ตระบบบอทเลขา...]</b>\n\nระบบกำลังตัดการทำงานและเริ่มใหม่อัตโนมัติใน 1 วินาทีค่ะ 🚀');
         setTimeout(() => {
             const rebootSigFile = path.join(__dirname, 'reboot_bot.signal');
-            try { atomicWriteFileSync(rebootSigFile, new Date().toISOString(), 'utf8'); } catch(e) {}
+            try { fs.writeFileSync(rebootSigFile, new Date().toISOString(), 'utf8'); } catch(e) {}
             // Force exit this process, Supervisor will instantly relaunch it!
             process.exit(0);
         }, 800);
         return;
+    }
 
-}
-
-function handleSystemStart(chatId, text, lower, msg) {
-
+    if (lower === '/start' || lower === '/dashboard' || lower === 'dashboard' || lower === 'แดชบอร์ด') {
         sendMessage(chatId, getDashboardSummary());
         return;
-
-}
-
-function handleHelpMenu(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/menu' || lower === 'เมนู' || lower === '/help' || lower === 'help') {
         const reply = `🤖 <b>[ระบบเลขา AI - รับคำสั่งข้อความโดยตรง 100%]</b>\n\n` +
                       `✨ <b>สามารถพิมพ์สอบถามหรือสั่งงานภาษาไทยได้ทันที:</b>\n` +
                       `• <i>"ขอสรุป order aft ล่าสุด"</i>\n` +
@@ -2166,11 +2152,8 @@ function handleHelpMenu(chatId, text, lower, msg) {
 • <code>/reboot</code> - รีสตาร์ตบอททันที (เมื่อบอทค้าง)`;
         sendMessage(chatId, reply);
         return;
-
-}
-
-function handleAiStudio(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '🎨 ai studio 300dpi' || lower === '/diffusion' || lower === '/studio' || lower === '300dpi') {
         const reply = `🎨 [AI Diffusion 300 DPI Hand-Drawn Studio]\n\n` +
                       `✨ คลังภาพและ Master Prompts 500 ชุด 6 หมวดหมู่:\n` +
                       `  • 🌿 Botanical (85) | 🦊 Wildlife (85)\n` +
@@ -2181,11 +2164,8 @@ function handleAiStudio(chatId, text, lower, msg) {
                       `⚡ สั่งรัน batch ได้ด้วย: /cmd powershell -File C:\\Users\\624\\ai_diffusion_500_handdrawn\\run_batch.ps1 -Limit 5`;
         sendMessageWithKeyboard(chatId, reply, getDashboardInlineMarkup());
         return;
-
-}
-
-function handleStockQuery(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '🥬 สต็อกผัก' || lower === '/stock' || lower === 'สต็อก' || lower === 'stock') {
         const reply = `🥬 <b>[สถานะสต็อกคงเหลือจริง ณ 02/09/2569]</b>\n` +
                       `━━━━━━━━━━━━━━━━━━━━\n` +
                       `1. 🥬 <b>กะหล่ำปลี:</b> <b>2,575 kg</b>\n` +
@@ -2197,11 +2177,8 @@ function handleStockQuery(chatId, text, lower, msg) {
                       ``;
         sendMessageWithKeyboard(chatId, reply, getDashboardInlineMarkup());
         return;
-
-}
-
-function handlePrepGroundTruth(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/prep_gt' || lower === '📅 กำหนดส่ง gt') {
         sendMessage(chatId, 'กำลังตรวจสอบและจัดทำ GT ล่วงหน้า 2 วัน (Multi-Customer)...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Auto-PrepareGT.ps1')}"`, (err, stdout) => {
             if (err) {
@@ -2211,11 +2188,8 @@ function handlePrepGroundTruth(chatId, text, lower, msg) {
             }
         });
         return;
-
-}
-
-function handleSystemStatus(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/status' || lower === '💻 สถานะระบบ' || lower === 'สถานะ') {
         const inHours = isWithinWorkingHours();
         const scheduleStatus = inHours 
             ? '🟢 กำลังเฝ้าตรวจเช็กอัตโนมัติ (ช่วงเวลา 07:00 - 19:00)' 
@@ -2239,11 +2213,8 @@ function handleSystemStatus(chatId, text, lower, msg) {
                       `บันทึกล่าสุด:\n${logTail}`;
         sendMessage(chatId, reply);
         return;
-
-}
-
-function handlePoSummary(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/po' || lower === '📦 สรุป po') {
         const reply = `📦 <b>[สรุป PO ประจำเดือน ก.ย. 2569 (Ground Truth 100%)]</b>\n` +
                       `━━━━━━━━━━━━━━━━━━━━\n` +
                       `🏢 1. <b>AFT (Ajinomoto) - Rev.01</b>\n` +
@@ -2267,11 +2238,8 @@ function handlePoSummary(chatId, text, lower, msg) {
                       `📱 <i>แตะปุ่มด้านล่างเพื่อเปิด PSC Mini App</i>`;
         sendMessage(chatId, reply);
         return;
-
-}
-
-function handleLatestFile(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/latest' || lower === '📁 ไฟล์ล่าสุด') {
         execSilent(`powershell -WindowStyle Hidden -Command "Get-ChildItem -Path 'E:\\รวมงาน\\งาน 25-26' -Include '*.pdf','*.xlsx' -Recurse | Where-Object { $_.Name -notlike 'COA*' -and $_.Name -notlike 'image*' -and $_.FullName -notlike '*\\.trashed*' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Select-Object -ExpandProperty FullName"`, (err, stdout) => {
             const filePath = stdout ? stdout.trim() : '';
             if (filePath && fs.existsSync(filePath)) {
@@ -2283,18 +2251,12 @@ function handleLatestFile(chatId, text, lower, msg) {
             }
         });
         return;
-
-}
-
-function handleSetHotmail(chatId, text, lower, msg) {
-
+    }
+    else if (lower.startsWith('/set_hotmail ') || lower.startsWith('/set_outlook ')) {
         sendMessage(chatId, '⛔ เพื่อความปลอดภัย กรุณาตั้งค่ารหัสผ่านอีเมลในไฟล์คอนฟิกหรือ Environment Variables บนเซิร์ฟเวอร์โดยตรง ไม่อนุญาตให้ส่งผ่านแชท (Fix H-12)');
         return;
-
-}
-
-function handleCheckHotmail(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/check_hotmail' || lower === '/hotmail') {
         sendMessage(chatId, 'กำลังเชื่อมต่อและตรวจสอบ Hotmail / Outlook (outlook.office365.com:993)...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-HotmailPO.ps1')}"`, (err, stdout) => {
             if (err) {
@@ -2304,11 +2266,8 @@ function handleCheckHotmail(chatId, text, lower, msg) {
             sendMessage(chatId, `✅ ตรวจสอบ Hotmail สำเร็จเรียบร้อย:\n${stdout || 'สแกนเสร็จสิ้น'}`);
         });
         return;
-
-}
-
-function handleCheckGmail(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/check' || lower === '🔄 เช็กเมล po' || lower === 'เช็กเมล') {
         sendMessage(chatId, 'กำลังตรวจสอบ Gmail...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(agyBaseDir, 'Fetch-GmailPO.ps1')}" -AutoProcessGT`, (err, stdout) => {
             if (err) {
@@ -2334,11 +2293,8 @@ function handleCheckGmail(chatId, text, lower, msg) {
             }
         });
         return;
-
-}
-
-function handleUpdateGtSchedule(chatId, text, lower, msg) {
-
+    }
+    else if (lower === '/gt' || lower === 'อัปเดต gt') {
         sendMessage(chatId, 'กำลังอัปเดต GT Schedule...');
         execSilent(`powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${path.join(poBaseDir, 'Generate-GTSchedule.ps1')}"`, (err) => {
             if (err) {
@@ -2348,72 +2304,8 @@ function handleUpdateGtSchedule(chatId, text, lower, msg) {
             }
         });
         return;
-
-}
-
-const commandRegistry = [
-    { match: (lower, text) => lower === '/model' || lower.startsWith('/model '), handler: handleModelSwitching },
-    { match: (lower, text) => lower.startsWith('/set_glm_url ') || lower.startsWith('/glm_url '), handler: handleSetGlmUrl },
-    { match: (lower, text) => lower.startsWith('/set_glm_key ') || lower.startsWith('/glm_key '), handler: handleSetGlmKey },
-    { match: (lower, text) => lower.startsWith('/glm ') || lower.startsWith('/chatglm '), handler: handleGlmExplicit },
-    { match: (lower, text) => lower.startsWith('ขอไฟล์') || lower.startsWith('ส่งไฟล์') || lower.startsWith('/file') || lower.startsWith('download') || lower.includes('ขอไฟล์') || lower.includes('ส่งไฟล์'), handler: handleFileRequest },
-    { match: (lower, text) => lower.startsWith('/cmd ') || lower.startsWith('/sh ') || lower.startsWith('/ps '), handler: handleTerminalCommand },
-    { match: (lower, text) => lower === '/agy' || lower === '/ai', handler: handleAgyCliPrompt },
-    { match: (lower, text) => lower === '/miniapp' || lower === '/app' || lower === 'miniapp' || lower === '/dashboard', handler: handleMiniAppDashboard },
-    { match: (lower, text) => lower === '/agy-customizations' || lower === '/customization', handler: handleAgyCustomizations },
-    { match: (lower, text) => lower.startsWith('/agy ') || lower.startsWith('/ai '), handler: handleAgyExplicit },
-    { match: (lower, text) => {
-
-        const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
-        return !hasNegation && (
-            text.includes('สต็อก') || text.includes('สต๊อก') || text.toLowerCase().includes('stock') ||
-            text.includes('ขึ้นของ') || text.includes('รับเข้า') || text.includes('ขึ้นกะหล่ำ') ||
-            text.includes('ขึ้นหอม') || text.includes('กะหล่ำเข้า') || text.includes('หอมเข้า') ||
-            text.includes('สุ่มปอก') || text.includes('ปอกได้') || text.includes('จำนวนที่ได้รับ') ||
-            text.includes('น้ำหนักสุทธิ') || text.includes('เก็บปลายทาง') || text.includes('ค่ารถ') ||
-            text.includes('ราคา') || (text.includes('กก.') && (text.includes('บ.') || text.includes('บาท')))
-        );
-    }, handler: handleStockAndOpsIngest },
-    { match: (lower, text) => lower === '/verify' || lower.startsWith('/verify ') || lower === '🔍 ตรวจสอบความถูกต้อง' || lower.startsWith('ตรวจข้อมูล'), handler: handleGroundTruthVerify },
-    { match: (lower, text) => lower === '/audit' || lower === '/integrity' || lower === '🔍 ตรวจสอบความถูกต้องไฟล์' || lower === 'audit', handler: handleExcelIntegrityAudit },
-    { match: (lower, text) => lower === '/ops' || lower === '/team' || lower === '🚜 สถานะจัดซื้อ' || lower.includes('สถานะจัดซื้อ') || lower.includes('สถานะทีมงาน') || lower.includes('สวนไหนบ้าง') || lower.includes('รถของใคร'), handler: handleFieldOpsStatus },
-    { match: (lower, text) => lower.startsWith('/setquota') || lower.startsWith('/updatequota'), handler: handleSetAiQuota },
-    { match: (lower, text) => lower === '/usage' || lower === '/quota' || lower === '⚡ ai quota' || lower === 'quota' || lower === 'usage' || lower === 'โควต้า', handler: handleAiQuotaUsage },
-    { match: (lower, text) => lower === '/memory' || lower === '🧠 ความจำเลขา' || lower === 'ความจำ' || lower === 'จำอะไรได้บ้าง' || lower === '/knowledge', handler: handleMemoryQuery },
-    { match: (lower, text) => lower.startsWith('จำว่า ') || lower.startsWith('จำไว้ว่า ') || lower.startsWith('ช่วยจำว่า ') || lower.startsWith('/remember ') || lower.startsWith('บันทึกว่า '), handler: handleMemoryRemember },
-    { match: (lower, text) => lower.startsWith('/forget ') || lower.startsWith('ลืมว่า ') || lower.startsWith('ลบความจำ '), handler: handleMemoryForget },
-    { match: (lower, text) => lower === '/reboot' || lower === '/restart' || lower === 'รีบูต' || lower === 'รีสตาร์ต' || lower === 'รีเซ็ตบอท', handler: handleSystemReboot },
-    { match: (lower, text) => lower === '/start' || lower === '/dashboard' || lower === 'dashboard' || lower === 'แดชบอร์ด', handler: handleSystemStart },
-    { match: (lower, text) => lower === '/menu' || lower === 'เมนู' || lower === '/help' || lower === 'help', handler: handleHelpMenu },
-    { match: (lower, text) => lower === '🎨 ai studio 300dpi' || lower === '/diffusion' || lower === '/studio' || lower === '300dpi', handler: handleAiStudio },
-    { match: (lower, text) => lower === '🥬 สต็อกผัก' || lower === '/stock' || lower === 'สต็อก' || lower === 'stock', handler: handleStockQuery },
-    { match: (lower, text) => lower === '/prep_gt' || lower === '📅 กำหนดส่ง gt', handler: handlePrepGroundTruth },
-    { match: (lower, text) => lower === '/status' || lower === '💻 สถานะระบบ' || lower === 'สถานะ', handler: handleSystemStatus },
-    { match: (lower, text) => lower === '/po' || lower === '📦 สรุป po', handler: handlePoSummary },
-    { match: (lower, text) => lower === '/latest' || lower === '📁 ไฟล์ล่าสุด', handler: handleLatestFile },
-    { match: (lower, text) => lower.startsWith('/set_hotmail ') || lower.startsWith('/set_outlook '), handler: handleSetHotmail },
-    { match: (lower, text) => lower === '/check_hotmail' || lower === '/hotmail', handler: handleCheckHotmail },
-    { match: (lower, text) => lower === '/check' || lower === '🔄 เช็กเมล po' || lower === 'เช็กเมล', handler: handleCheckGmail },
-    { match: (lower, text) => lower === '/gt' || lower === 'อัปเดต gt', handler: handleUpdateGtSchedule },
-];
-
-function handleCommand(chatId, text, msg = null) {
-    const ALLOWED_ADMINS = ['1532466397', config.ChatId];
-    if (!ALLOWED_ADMINS.includes(chatId.toString())) {
-        sendMessage(chatId, '⛔ Access Denied: คุณไม่มีสิทธิ์เข้าถึงระบบ (Unauthorized Telegram User)');
-        return;
     }
-    const lower = text.toLowerCase();
-    const hasNegation = text.includes('undo') || text.includes('ไม่ใช่') || text.includes('แก้ไข') || text.includes('ตัวอย่าง') || text.includes('แจ้งเตือน') || text.includes('ยกเลิก') || text.includes('ยังไม่ได้') || text.includes('ลบ');
-
-
-    for (const cmd of commandRegistry) {
-        if (cmd.match(lower, text)) {
-            cmd.handler(chatId, text, lower, msg);
-            return;
-        }
-    }
-
+    else {
         // 4. Default Direct Route -> OKMD Playground (Primary) / AGY / GLM
         if (currentAiEngine === 'okmd') {
             runOkmdEngine(chatId, text);
@@ -2422,9 +2314,8 @@ function handleCommand(chatId, text, msg = null) {
         } else {
             runAgyCli(chatId, text);
         }
-
+    }
 }
-
 
 // Start polling
 
