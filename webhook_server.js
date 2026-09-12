@@ -374,6 +374,10 @@ const server = http.createServer(async (req, res) => {
         req.on('data', chunk => {
             length += chunk.length;
             if (length > MAX_BODY_SIZE) {
+                if (!res.headersSent) {
+                    res.writeHead(413, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: 'Payload Too Large: Exceeded 1MB limit' }));
+                }
                 req.destroy();
                 return reject(new Error('Payload Too Large: Exceeded 1MB limit'));
             }
