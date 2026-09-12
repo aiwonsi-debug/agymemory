@@ -691,7 +691,7 @@ const server = http.createServer(async (req, res) => {
             ].find(f => fs.existsSync(f));
             if (targetStockFile) {
                 try {
-                    stockData = JSON.parse(fs.readFileSync(targetStockFile, 'utf8'));
+                    stockData = JSON.parse(await fs.promises.readFile(targetStockFile, 'utf8'));
                 } catch (e) {}
             }
             res.writeHead(200);
